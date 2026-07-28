@@ -174,6 +174,9 @@ README.md; the reference below explains the options by group.
 `fold.level`      (99) 'foldlevel' applied on attach. The default keeps the
                   document OPEN — a renderer that collapses your file on
                   load made a decision that was yours to make.
+`fold.text.position`  which end of the collapsed row the count box sits at:
+                      "right" (default — in line with the other right-hand
+                      chrome) or "left" (straight after the heading's name).
 `fold.text`       the rendered collapsed line: `enabled` (true), `title`
                   ("{icon} {title}") drawn in the heading level's own band,
                   `info` ("➤ {count} lines") drawn as a BOX in that level's
@@ -270,27 +273,30 @@ README.md; the reference below explains the options by group.
                       `label` — the language chip (devicon through
                       lvim-icons when present, `icon` as the fallback).
                       `fences` — "show" (default) keeps the fence LINES
-                      visible: only the backticks conceal and the chip sits
-                      at the line start before the language name. Neovim's
-                      own markdown query hides those lines whole
-                      ('conceal_lines' — and the user-site copy conceals
-                      the language text too), so "show" installs an amended
-                      highlight query with just the fence-conceal
-                      directives stripped, via |vim.treesitter.query.set()|;
-                      health reports how many directives were stripped.
-                      "hide" keeps the native behaviour, with the chip
-                      right-aligned on the block's first content row.
-                      `position` — where the chip sits on the fence line:
-                      "left" (default; icon inline, the language text keeps
-                      its place), "center" or "right" (the language text
-                      conceals too and icon + name draw there). With
-                      fences = "hide" the chip is always right-aligned on
-                      the first content row. `icon_color` — "accent"
-                      (default; the chip icon in `highlights.code_icon`,
-                      one distinct colour) or "devicon" (the language's own
-                      lvim-icons colour, accent as fallback). The band
-                      (`highlights.code`) defaults to the palette's darker
-                      bg_dark surface.
+                      visible and conceals only the backticks; "hide" is
+                      Neovim's own `conceal_lines` behaviour, which removes
+                      the fence rows from the display entirely.
+                      `header` (true) draws the OPENING fence as a full-width
+                      band — its text is concealed anyway, so the row carries
+                      the language chip instead. Needs `fences = "show"`:
+                      nothing can be drawn on a row that has been removed
+                      from the display. `air` (1) blank rows between the band
+                      and the first line of code, in the body's colour.
+                      `pad` (2) spaces of inset left and right of the code, on
+                      the CODE rows only — the band is chrome. `width` —
+                      "full" (default) draws the body to the window edge like
+                      the band above it, "content" narrows it to a box as wide
+                      as the longest line plus the padding.
+                      `position` — where the chip sits on the band: "right"
+                      (default), "center" or "left". With fences = "hide" it
+                      is always right-aligned on the first content row.
+                      `icon_color` — "devicon" (default): the glyph AND the
+                      chip's background tint both come from the icon plugin,
+                      so a code block is the colour its file type is
+                      everywhere else in the editor; "accent" uses this
+                      plugin's own single colour (`highlights.code_icon`).
+                      The band (`highlights.code`) defaults to the palette's
+                      darker bg_dark surface, the header to blue.
 `markdown.quotes`     `border` ("▍") — what every `>` is redrawn as, per
                       nesting depth accent, on continuation rows too.
                       `repeat_on_wrap` (false) repeats the border on WRAPPED
@@ -808,6 +814,11 @@ measuring pass). They are recorded as open items rather than half-implemented.
     LvimRenderCode                    the code-block band (background-only)
     LvimRenderCodeLabel               the language chip's name part
     LvimRenderCodeIcon                the chip icon (icon_color = "accent")
+    LvimRenderCodeHeader              the full-width band on the opening fence
+    LvimRenderCodeChip*               the chip cell — built at draw time from
+                                      the language icon's OWN colour, tinted by
+                                      `highlights.code_chip`, so a code block is
+                                      the colour its file type is everywhere
     LvimRenderCodeInline              the inline-code pill (background-only)
     LvimRenderLink                    link/image icons
     LvimRenderQuote1 .. QuoteN        quote borders per nesting depth

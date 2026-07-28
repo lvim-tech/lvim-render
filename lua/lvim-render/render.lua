@@ -731,22 +731,108 @@ local function emit_codeblock(ctx, node)
         return
     end
 
+    local delimiters, content, lang_node, lang = ctx.shape.code_parts(node, ctx.buf)
+
+    -- THE HEADER ROW. The opening fence's text is concealed whole, which leaves the row free: it
+    -- becomes the band that carries the language chip. Only with `fences = "show"` — "hide"
+    -- removes the row from the display and nothing can be drawn on a row that is not there
+    -- (measured: virt_lines on a `conceal_lines` row do not draw either).
+    -- The block's FIRST row, not the first delimiter's: org writes its opening marker as two
+    -- tokens and the order they arrive in is the query's business, not this one's. The opening
+    -- fence is the block's first line in every format that has one.
+    local header_row = nil
+    if cconf.header and cconf.fences == "show" and delimiters[1] ~= nil then
+        header_row = sr
+    end
+
+    -- THE BODY'S WIDTH. "content" makes the code a BOX — as wide as its longest line plus the
+    -- padding on both sides — under a header band that stays full width; "full" reaches the window
+    -- edge on every row, which is what a plain band always did.
+    local pad = math.max(0, cconf.pad or 0)
+    local box = text_width(ctx)
+    local boxed = cconf.band and cconf.width == "content"
+    -- The rows are read when EITHER the box needs measuring or the inset needs placing at the end
+    -- of each line — one call for the block, not one per row.
+    local body_lines = (cconf.band and (boxed or pad > 0)) and api.nvim_buf_get_lines(ctx.buf, sr, end_row + 1, false)
+        or nil
+    if boxed and body_lines ~= nil then
+        -- Measured over the WHOLE block, not the visible part: a box whose width changed as it
+        -- scrolled would breathe in and out under the reader.
+        local widest = 0
+        for i, line in ipairs(body_lines) do
+            local row = sr + i - 1
+            if row ~= header_row then
+                widest = math.max(widest, fn.strdisplaywidth(line))
+            end
+        end
+        box = math.min(box, widest + pad * 2)
+    end
+
     if cconf.band then
         for row = math.max(sr, ctx.first), math.min(end_row, ctx.last) do
-            -- BACKGROUND-only group (fg = false in its spec), priority below treesitter: the
-            -- injected language's own colours always win on top of the band — §2a.
-            op(ctx, row, 0, {
-                end_row = row + 1,
-                end_col = 0,
-                hl_group = "LvimRenderCode",
-                hl_eol = true,
-                hl_mode = "combine",
-                priority = config.priorities.band,
-            })
+            if row == header_row then
+                -- END TO END, whatever the body does: the band is the block's chrome, and chrome
+                -- that stopped where the code stops would read as one more line of it.
+                op(ctx, row, 0, {
+                    end_row = row + 1,
+                    end_col = 0,
+                    hl_group = "LvimRenderCodeHeader",
+                    hl_eol = true,
+                    hl_mode = "combine",
+                    priority = config.priorities.band,
+                })
+            else
+                -- BACKGROUND-only group (fg = false in its spec), priority below treesitter: the
+                -- injected language's own colours always win on top of the band — §2a.
+                op(ctx, row, 0, {
+                    end_row = row + 1,
+                    end_col = 0,
+                    hl_group = "LvimRenderCode",
+                    hl_eol = not boxed,
+                    hl_mode = "combine",
+                    priority = config.priorities.band,
+                })
+                if body_lines ~= nil then
+                    -- The INSET, and — when the body is a box — the fill that carries its
+                    -- background out to the box's edge. A full-width body needs no fill: `hl_eol`
+                    -- already paints to the window's edge, and the trailing space is only there so
+                    -- a line that reaches the edge does not touch it.
+                    local line = body_lines[row - sr + 1] or ""
+                    local fill = boxed and math.max(0, box - pad - fn.strdisplaywidth(line)) or pad
+                    if #line == 0 then
+                        op(ctx, row, 0, {
+                            virt_text = { { string.rep(" ", pad + fill), "LvimRenderCode" } },
+                            virt_text_pos = "inline",
+                        })
+                    else
+                        if pad > 0 then
+                            op(ctx, row, 0, {
+                                virt_text = { { string.rep(" ", pad), "LvimRenderCode" } },
+                                virt_text_pos = "inline",
+                            })
+                        end
+                        if fill > 0 then
+                            op(ctx, row, #line, {
+                                virt_text = { { string.rep(" ", fill), "LvimRenderCode" } },
+                                virt_text_pos = "inline",
+                            })
+                        end
+                    end
+                end
+            end
         end
     end
 
-    local delimiters, content, lang_node, lang = ctx.shape.code_parts(node, ctx.buf)
+    -- AIR under the band: the same blank row a framed window puts below its title, in the body's
+    -- own colour so it reads as the top of the code box rather than a gap in the document.
+    if header_row ~= nil and (cconf.air or 0) > 0 and header_row >= ctx.first and header_row <= ctx.last then
+        ---@type [string, string][][]
+        local air = {}
+        for _ = 1, cconf.air do
+            air[#air + 1] = { { string.rep(" ", box), "LvimRenderCode" } }
+        end
+        op(ctx, header_row, 0, { virt_lines = air })
+    end
 
     -- The chip icon's colour: "accent" (default) is the plugin's own distinct group;
     -- "devicon" takes the language's lvim-icons colour when available, accent as fallback.
@@ -781,7 +867,7 @@ local function emit_codeblock(ctx, node)
         -- first: markdown writes one delimiter per row, but org's opening marker is two tokens
         -- (`#+begin_` plus the block kind), and anchoring after the first drew the chip in the
         -- middle of what was about to disappear.
-        local open_row = delimiters[1] ~= nil and delimiters[1]:range() or 0
+        local open_row = header_row or (delimiters[1] ~= nil and delimiters[1]:range() or 0)
         local anchor = 0
         for _, delim in ipairs(delimiters) do
             local dr, _, _, dec = delim:range()
@@ -789,34 +875,38 @@ local function emit_codeblock(ctx, node)
                 anchor = math.max(anchor, dec)
             end
         end
-        for i, delim in ipairs(delimiters) do
+        for _, delim in ipairs(delimiters) do
             local dr, dc, _, dec = delim:range()
             op(ctx, dr, dc, { end_col = dec, conceal = "" })
-            if i == 1 and cconf.label and lang ~= nil and icon ~= "" then
-                dec = anchor
-                if cconf.position == "left" or lang_node == nil then
-                    op(ctx, dr, dec, {
-                        virt_text = { { icon .. " ", icon_hl } },
-                        virt_text_pos = "inline",
-                    })
-                else
-                    local lsr, lsc, _, lec = lang_node:range()
-                    op(ctx, lsr, lsc, { end_col = lec, conceal = "" })
-                    ---@type vim.api.keyset.set_extmark
-                    local opts = {
-                        virt_text = { { icon, icon_hl }, { " " .. lang, "LvimRenderCodeLabel" } },
-                        hl_mode = "combine",
-                    }
-                    if cconf.position == "right" then
-                        opts.virt_text_pos = "right_align"
-                    else
-                        opts.virt_text_pos = "overlay"
-                        local chip_cells = fn.strdisplaywidth(icon) + 1 + fn.strdisplaywidth(lang)
-                        opts.virt_text_win_col = math.max(math.floor((text_width(ctx) - chip_cells) / 2), 0)
-                    end
-                    op(ctx, dr, dec, opts)
-                end
+        end
+
+        -- THE CHIP: icon and language in ONE cell, a space on either side, painted in the icon's
+        -- own colour on a tinted version of it — so the band says which language this is in the
+        -- colour that language already has everywhere else in the editor.
+        if cconf.label and lang ~= nil and icon ~= "" and header_row ~= nil then
+            if lang_node ~= nil then
+                local lsr, lsc, _, lec = lang_node:range()
+                op(ctx, lsr, lsc, { end_col = lec, conceal = "" })
             end
+            local chip = (" %s %s "):format(icon, lang)
+            local cells = fn.strdisplaywidth(chip)
+            ---@type vim.api.keyset.set_extmark
+            local opts = {
+                virt_text = { { chip, highlights.chip(icon_hl) } },
+                hl_mode = "combine",
+                priority = config.priorities.band + 1,
+            }
+            if cconf.position == "right" then
+                opts.virt_text_pos = "right_align"
+            else
+                -- OVERLAY, not inline: the row's own text is concealed to nothing, so an inline
+                -- chunk would still sit at column 0 and "center" would mean nothing. Overlay puts
+                -- it at a screen column of its own choosing.
+                opts.virt_text_pos = "overlay"
+                opts.virt_text_win_col = cconf.position == "left" and 0
+                    or math.max(math.floor((text_width(ctx) - cells) / 2), 0)
+            end
+            op(ctx, header_row, anchor, opts)
         end
         return
     end

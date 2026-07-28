@@ -231,6 +231,7 @@ require("lvim-render").setup({
             enabled = true, -- render the collapsed line instead of the raw +-- foldtext
             title = "{icon} {title}", -- leading chunk, in the heading level's group
             info = " ➤ {count} lines ", -- the count BOX, in the level's accent blended harder
+            position = "right", -- which end of the collapsed row the box sits at | "left"
             count_tint = 0.4, -- how hard; the whole row rises to it while the cursor is on it
         },
         keys = { cycle = "<Tab>", cycle_all = "<S-Tab>" }, -- buffer-local; false takes no key
@@ -292,8 +293,12 @@ require("lvim-render").setup({
             label = true, -- the language chip (devicon + name)
             icon = "󰅩", -- chip fallback when lvim-icons is absent for the language
             fences = "show", -- fence lines visible, backticks concealed | "hide" = native
-            position = "left", -- chip on the fence line: "left" | "center" | "right"
-            icon_color = "accent", -- "accent" (highlights.code_icon) | "devicon" (lvim-icons)
+            position = "right", -- chip on the header band: "left" | "center" | "right"
+            icon_color = "devicon", -- "devicon" (lvim-icons colour) | "accent" (highlights.code_icon)
+            header = true, -- the opening fence drawn as a full-width band carrying the chip
+            air = 1, -- blank rows between the band and the first line of code
+            pad = 2, -- spaces of inset left and right, on the code rows only
+            width = "full", -- body to the window edge | "content" = a box as wide as the code
         },
         quotes = {
             enabled = true,
@@ -553,6 +558,8 @@ require("lvim-render").setup({
         -- bg_dark at full tint = the palette's own darker surface.
         code = { accent = "bg_dark", tint = 1, fg = false },
         code_label = { accent = "blue", bg = false },
+        code_header = { accent = "blue", tint = 0.15, fg = false }, -- the full-width header band
+        code_chip = { tint = 0.15, bold = true }, -- the chip's tint; its colour is the icon's own
         code_icon = { accent = "orange", bg = false },
         code_inline = { accent = "yellow", tint = 0.15, fg = false },
         link = { accent = "blue", bg = false },

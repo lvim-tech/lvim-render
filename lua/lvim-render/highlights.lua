@@ -22,6 +22,9 @@ local M = {}
 ---@type boolean  the factory is already bound
 local bound = false
 
+---@type table<string, string>  an icon's highlight group → the CHIP group built from its colour
+local chips = {}
+
 --- Resolve one config spec into a highlight definition.
 ---@param spec LvimRenderHighlightSpec
 ---@param c table  the live palette
@@ -53,6 +56,9 @@ end
 ---@return table<string, vim.api.keyset.highlight>
 local function build(c)
     c = c or require("lvim-utils.colors")
+    -- The chips are derived from icon colours the palette can move; drop them so the next draw
+    -- rebuilds each one against the new background.
+    chips = {}
     local groups = {}
     for level = 1, 6 do
         local spec = config.highlights["h" .. level] or {}
@@ -90,6 +96,7 @@ local function build(c)
     groups["LvimRenderCodeLabel"] = group(config.highlights.code_label or {}, c)
     groups["LvimRenderCodeIcon"] = group(config.highlights.code_icon or {}, c)
     groups["LvimRenderCodeInline"] = group(config.highlights.code_inline or {}, c)
+    groups["LvimRenderCodeHeader"] = group(config.highlights.code_header or {}, c)
     groups["LvimRenderLink"] = group(config.highlights.link or {}, c)
     groups["LvimRenderTerm"] = group(config.highlights.term or {}, c)
     groups["LvimRenderTableBorder"] = group(config.highlights.table_border or {}, c)
@@ -183,6 +190,36 @@ function M.callout_group(key)
         return nil
     end
     return "LvimRenderCallout" .. callout_suffix(key)
+end
+
+--- The CHIP group for a language icon: the glyph's OWN colour on a tinted version of itself, so
+--- the cell reads as belonging to the icon rather than to the band under it. A devicon's colour is
+--- only known once that language appears in a buffer, so the group is built on demand — and built
+--- OUT of the redraw: defining a highlight while the screen is being painted is a mutation during
+--- drawing, so the first pass draws with the plain icon group and the definition lands for the
+--- redraw that setting it triggers.
+---@param icon_hl string  the icon's own highlight group
+---@return string  the chip group, or `icon_hl` itself until the definition lands
+function M.chip(icon_hl)
+    local cached = chips[icon_hl]
+    if cached ~= nil then
+        return cached
+    end
+    chips[icon_hl] = icon_hl
+    vim.schedule(function()
+        local spec = config.highlights.code_chip or {}
+        local c = require("lvim-utils.colors")
+        local fg = vim.api.nvim_get_hl(0, { name = icon_hl, link = false }).fg
+        local color = type(fg) == "number" and ("#%06x"):format(fg) or c.blue
+        local name = "LvimRenderCodeChip" .. icon_hl:gsub("%W", "")
+        vim.api.nvim_set_hl(0, name, {
+            fg = color,
+            bg = hl.blend(color, c.bg, spec.tint or 0.4),
+            bold = spec.bold or false,
+        })
+        chips[icon_hl] = name
+    end)
+    return icon_hl
 end
 
 --- Bind the palette factory. Idempotent; a repeat call re-derives from the current config.

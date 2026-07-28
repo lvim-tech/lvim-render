@@ -437,6 +437,41 @@ function M.check()
         end
     end
 
+    -- The code block's chrome, per format: a band that cannot be drawn, an inset nobody asked for,
+    -- or a width nobody recognises all fail SILENTLY at draw time — named here instead.
+    for _, format in ipairs({ "markdown", "org", "typst" }) do
+        local cconf = (config[format] or {}).code
+        if type(cconf) == "table" then
+            local where = format .. ".code"
+            if cconf.position ~= "left" and cconf.position ~= "center" and cconf.position ~= "right" then
+                health.error(
+                    ('%s.position must be "left", "center" or "right", got %s'):format(where, tostring(cconf.position))
+                )
+            end
+            if cconf.width ~= "full" and cconf.width ~= "content" then
+                health.error(('%s.width must be "full" or "content", got %s'):format(where, tostring(cconf.width)))
+            end
+            if type(cconf.air) ~= "number" or cconf.air < 0 then
+                health.error(("%s.air must be a number of rows, got %s"):format(where, tostring(cconf.air)))
+            end
+            if type(cconf.pad) ~= "number" or cconf.pad < 0 then
+                health.error(("%s.pad must be a number of cells, got %s"):format(where, tostring(cconf.pad)))
+            end
+            if cconf.header and cconf.fences ~= "show" then
+                health.warn(
+                    ('%s.header needs fences = "show" — a conceal_lines-hidden fence row cannot be drawn on'):format(
+                        where
+                    )
+                )
+            end
+        end
+    end
+
+    local fold_pos = config.fold.text.position
+    if fold_pos ~= "right" and fold_pos ~= "left" then
+        health.error(('fold.text.position must be "right" or "left", got %s'):format(tostring(fold_pos)))
+    end
+
     local nav_mode = config.tables_nav_mode
     if nav_mode ~= "widget" and nav_mode ~= "stop" and nav_mode ~= "raw" then
         health.error(('tables_nav_mode must be "widget", "stop" or "raw", got %s'):format(tostring(nav_mode)))

@@ -93,6 +93,12 @@
 ---   those lines outright (`conceal_lines`), so "show" installs an amended highlight query with
 ---   just that directive stripped (the official `vim.treesitter.query.set` seam). "hide" keeps
 ---   the native behaviour, with the chip right-aligned on the first content row
+---@field header boolean   draw the opening fence as a full-width band carrying the chip (needs
+---   `fences = "show"` — a `conceal_lines`-hidden row cannot be drawn on)
+---@field air integer      blank rows between the band and the first line of code
+---@field pad integer      spaces of inset left and right of the code, on the CODE rows only
+---@field width "full"|"content"  how wide the BODY is drawn: to the window edge, or a box as wide
+---   as the longest line plus the padding (the header stays full width either way)
 ---@field position "left"|"center"|"right"  where the chip sits ON THE FENCE LINE (fences =
 ---   "show"): "left" keeps the language text in place behind the inline icon; "center"/"right"
 ---   conceal the language text too and draw icon + name there. With fences = "hide" the chip is
@@ -153,8 +159,9 @@
 ---   Neovim's raw `+--` foldtext
 ---@field title string     the leading chunk, drawn in the heading level's own group: `{icon}`,
 ---   `{title}`
----@field info string      the trailing chunk, drawn in LvimRenderFoldInfo: `{count}` is the number
----   of hidden lines
+---@field info string      the count chunk, drawn in the level's STRONG tint: `{count}` is the
+---   number of hidden lines
+---@field position "right"|"left"  which end of the collapsed row the count box sits at
 
 ---@class LvimRenderFoldKeysConfig
 ---@field cycle string|false      buffer-local key cycling the heading under the cursor through
@@ -449,6 +456,9 @@ local M = {
         level = 99,
         text = {
             enabled = true,
+            -- Where the count box sits on the collapsed row: "right" (the far end, in line with
+            -- the other right-hand chrome) or "left" (straight after the title).
+            position = "right",
             title = "{icon} {title}",
             -- `➤` per the separator canon: the collapsed heading POINTS at what it hides.
             info = " ➤ {count} lines ",
@@ -525,8 +535,25 @@ local M = {
             -- nf-md-code_braces fallback when lvim-icons is absent for the language.
             icon = "󰅩",
             fences = "show",
-            position = "left",
-            icon_color = "accent",
+            -- WHERE THE CHIP SITS ON THE HEADER BAND: "left" | "center" | "right".
+            position = "right",
+            -- "devicon" takes the language's colour from the ICON plugin — the glyph and the
+            -- chip's tint both come from there, so a code block is the same colour the file type
+            -- is everywhere else in the editor. "accent" uses this plugin's own single colour.
+            icon_color = "devicon",
+            -- THE OPENING FENCE AS A BAND. Its text is concealed anyway, so the row is free: it
+            -- becomes a full-width strip carrying the language chip. Needs `fences = "show"` —
+            -- with "hide" the row is removed from the display and nothing can be drawn on it.
+            header = true,
+            -- Blank rows between the band and the first line of code — the same "air" the framed
+            -- windows put under a title.
+            air = 1,
+            -- Spaces of inset left and right of the code, on the CODE rows only: the band is the
+            -- chrome, the code should not touch its edge.
+            pad = 2,
+            -- How wide the BODY is drawn: "full" reaches the window edge like the header above it,
+            -- "content" narrows it to a box as wide as the longest line plus the padding.
+            width = "full",
         },
         quotes = {
             enabled = true,
@@ -648,8 +675,25 @@ local M = {
             label = true,
             icon = "󰅩",
             fences = "show",
-            position = "left",
-            icon_color = "accent",
+            -- WHERE THE CHIP SITS ON THE HEADER BAND: "left" | "center" | "right".
+            position = "right",
+            -- "devicon" takes the language's colour from the ICON plugin — the glyph and the
+            -- chip's tint both come from there, so a code block is the same colour the file type
+            -- is everywhere else in the editor. "accent" uses this plugin's own single colour.
+            icon_color = "devicon",
+            -- THE OPENING FENCE AS A BAND. Its text is concealed anyway, so the row is free: it
+            -- becomes a full-width strip carrying the language chip. Needs `fences = "show"` —
+            -- with "hide" the row is removed from the display and nothing can be drawn on it.
+            header = true,
+            -- Blank rows between the band and the first line of code — the same "air" the framed
+            -- windows put under a title.
+            air = 1,
+            -- Spaces of inset left and right of the code, on the CODE rows only: the band is the
+            -- chrome, the code should not touch its edge.
+            pad = 2,
+            -- How wide the BODY is drawn: "full" reaches the window edge like the header above it,
+            -- "content" narrows it to a box as wide as the longest line plus the padding.
+            width = "full",
         },
         -- `#+begin_quote` … `#+end_quote`: the border rides the CONTENT rows, not the markers.
         quotes = { enabled = true, border = "▍", repeat_on_wrap = false },
@@ -700,8 +744,25 @@ local M = {
             label = true,
             icon = "󰅩",
             fences = "show",
-            position = "left",
-            icon_color = "accent",
+            -- WHERE THE CHIP SITS ON THE HEADER BAND: "left" | "center" | "right".
+            position = "right",
+            -- "devicon" takes the language's colour from the ICON plugin — the glyph and the
+            -- chip's tint both come from there, so a code block is the same colour the file type
+            -- is everywhere else in the editor. "accent" uses this plugin's own single colour.
+            icon_color = "devicon",
+            -- THE OPENING FENCE AS A BAND. Its text is concealed anyway, so the row is free: it
+            -- becomes a full-width strip carrying the language chip. Needs `fences = "show"` —
+            -- with "hide" the row is removed from the display and nothing can be drawn on it.
+            header = true,
+            -- Blank rows between the band and the first line of code — the same "air" the framed
+            -- windows put under a title.
+            air = 1,
+            -- Spaces of inset left and right of the code, on the CODE rows only: the band is the
+            -- chrome, the code should not touch its edge.
+            pad = 2,
+            -- How wide the BODY is drawn: "full" reaches the window edge like the header above it,
+            -- "content" narrows it to a box as wide as the longest line plus the padding.
+            width = "full",
         },
         links = {
             enabled = true,
@@ -820,6 +881,11 @@ local M = {
         code = { accent = "bg_dark", tint = 1, fg = false },
         code_label = { accent = "blue", bg = false },
         code_icon = { accent = "orange", bg = false },
+        -- The header band: blue, end to end, a shade above the body it sits on.
+        code_header = { accent = "blue", tint = 0.15, fg = false },
+        -- The chip is built from the ICON'S OWN colour at draw time (a devicon differs per
+        -- language), so only its tint is configurable here — the accent comes from the glyph.
+        code_chip = { tint = 0.15, bold = true },
         -- The inline-code pill: background only, the treesitter raw-text colour stays.
         code_inline = { accent = "yellow", tint = 0.15, fg = false },
         link = { accent = "blue", bg = false },

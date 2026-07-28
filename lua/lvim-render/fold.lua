@@ -370,12 +370,20 @@ local function text_impl()
     local width = api.nvim_win_get_width(0) - vim.fn.getwininfo(api.nvim_get_current_win())[1].textoff
     local rest = width - fn.strdisplaywidth(title) - fn.strdisplaywidth(info)
     ---@type [string, string][]
-    local chunks = {
-        { title, line_hl },
-        { info, strong },
-    }
-    if rest > 0 then
-        chunks[#chunks + 1] = { string.rep(" ", rest), line_hl }
+    local chunks = { { title, line_hl } }
+    -- WHERE THE BOX SITS. "right" pushes it to the far end of the row by filling between it and
+    -- the title, so the count lines up with the other right-hand chrome instead of trailing the
+    -- title at a distance that changes with every heading's length.
+    if config.fold.text.position == "right" then
+        if rest > 0 then
+            chunks[#chunks + 1] = { string.rep(" ", rest), line_hl }
+        end
+        chunks[#chunks + 1] = { info, strong }
+    else
+        chunks[#chunks + 1] = { info, strong }
+        if rest > 0 then
+            chunks[#chunks + 1] = { string.rep(" ", rest), line_hl }
+        end
     end
     return chunks
 end
