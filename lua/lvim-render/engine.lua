@@ -212,6 +212,13 @@ local function rebuild(buf, gen)
     end
     local dirty = st.dirty
     st.dirty = nil
+    -- OFF-SCREEN MARKS GO AT EVERY EDIT. A boxed table keeps its marks beyond the visible rows on
+    -- purpose (that is what lets it draw while its anchor is scrolled away), and the lane that
+    -- reconciles them only ever visits rows a pass SAW — so a table edited while off screen would
+    -- keep a box describing text that no longer exists, and `conceal_lines` marks hiding rows that
+    -- are no longer a table's. Dropping the whole lane on the debounce is the honest reset: the
+    -- next paint rebuilds exactly what is visible, at the same screen cost as any other redraw.
+    api.nvim_buf_clear_namespace(buf, render.ns_inline, 0, -1)
     fold.rebuild(buf)
     if dirty ~= nil then
         -- A heading edit changes the fold level of every line down to the next heading, so the
@@ -350,6 +357,22 @@ function M.attach(buf)
                 local row = api.nvim_win_get_cursor(0)[1] - 1
                 if render.is_hidden_separator(buf, row) then
                     pcall(vim.cmd, ("normal! %s"):format(delta < 0 and "k" or "j"))
+                    row = api.nvim_win_get_cursor(0)[1] - 1
+                end
+                -- THE VIEW HAS TO BE LED THROUGH THE BOX. A boxed table's rows are hidden, so they
+                -- have no screen height of their own and Neovim has nothing to scroll TO: walking
+                -- up into a table whose bottom sits at the top of the window simply stopped, the
+                -- cursor moving in a buffer that would not follow (reported). The box's lines
+                -- belong to the row ABOVE the table, so the view is nudged one screen line per
+                -- keypress while the cursor is inside and that block is not yet fully shown —
+                -- which tracks, since one source row is one or more box lines.
+                local span = render.boxed_span(buf, row)
+                if span ~= nil then
+                    if delta < 0 and vim.fn.line("w0") > span.first then
+                        pcall(vim.cmd, "normal! \25") -- CTRL-Y
+                    elseif delta > 0 and vim.fn.line("w$") < span.last + 1 then
+                        pcall(vim.cmd, "normal! \5") -- CTRL-E
+                    end
                 end
             end, {
                 buffer = buf,
@@ -699,6 +722,21 @@ local function reconcile_inline(buf, top, bot, wanted)
     end
 end
 
+--- The row span the persistent lane must reconcile: the drawn rows, widened by whatever the walk
+--- says it owns beyond them. Public so both entry points widen it identically — one of them
+--- forgetting to is exactly the asymmetry that leaves a mark nobody can remove.
+---@param top integer
+---@param bot integer
+---@param extend { first: integer, last: integer }|nil
+---@return integer top
+---@return integer bot
+function M.reconcile_span(top, bot, extend)
+    if extend == nil then
+        return top, bot
+    end
+    return math.min(top, extend.first), math.max(bot, extend.last)
+end
+
 --- Bring the persistent inline lane current for a window's rows WITHOUT a redraw — the public
 --- seam of the reconcile, so "are the inline marks what the walk wants" is a question a fixture
 --- (or any caller) can ask headless, where the provider never fires.
@@ -708,7 +746,8 @@ end
 ---@param bot integer  0-based last row
 ---@return integer wanted  how many inline ops the walk produced for those rows
 function M.sync_inline(win, buf, top, bot)
-    local ops = render.collect(win, buf, top, bot)
+    local ops, _, extend = render.collect(win, buf, top, bot)
+    top, bot = M.reconcile_span(top, bot, extend)
     ---@type LvimRenderOp[]
     local inline = {}
     for i = 1, #ops do
@@ -733,7 +772,11 @@ function M.start()
                 return false
             end
             local started = uv.hrtime()
-            local ops, reveal = render.collect(win, buf, top, bot)
+            local ops, reveal, extend = render.collect(win, buf, top, bot)
+            -- The pass may own persistent marks OUTSIDE the drawn rows — a boxed table crossing
+            -- the viewport edge hangs its block above and hides its rows below. Reconciling only
+            -- what is drawn would leave half of them uncreatable, and the other half undeletable.
+            top, bot = M.reconcile_span(top, bot, extend)
             ---@type LvimRenderOp[]
             local inline = {}
             for i = 1, #ops do

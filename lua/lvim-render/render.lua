@@ -394,6 +394,11 @@ end
 ---@field protect table<integer, [integer, integer][]>  per-row byte ranges the ROW SCANS must
 ---   not decorate inside (code spans, math spans, autolinks)
 ---@field skip_rows table<integer, true>  rows the scans skip whole (code blocks, frontmatter)
+---@field extend { first: integer, last: integer }|nil  rows OUTSIDE the visible range whose
+---   persistent marks this pass still owns. A boxed table hangs one block of virtual lines off the
+---   row above it and hides every row below with `conceal_lines`; the lane that reconciles those
+---   marks looks only at the rows the walk SAW, so a table crossing the viewport edge must widen
+---   that window or half its marks can never be created — nor taken down again
 
 --- Append one op.
 ---@param ctx LvimRenderWalkCtx
@@ -1663,16 +1668,14 @@ local function emit_table_wrapped(ctx, node, info)
         return false
     end
 
-    -- ONLY WHEN THE WHOLE TABLE IS ON SCREEN. The box is one tall block of virtual lines hanging
-    -- off the row above the table, and the persistent lane reconciles only the rows the walk SAW.
-    -- With the anchor scrolled above the viewport its block cannot be taken down, while the rows
-    -- below it can un-hide — box and raw table on screen at once (measured). Requiring the anchor
-    -- and the last row to be in range makes that state unreachable: whenever the box can be put
-    -- up, it can also be taken down.
-    if sr - 1 < ctx.first or end_row > ctx.last then
-        record(nil)
-        return false
-    end
+    -- THE WHOLE TABLE IS CLAIMED, however little of it is on screen. Neovim draws a virtual block
+    -- whose anchor has scrolled above the viewport — measured: with the anchor on line 10 and the
+    -- window top at 11, rows 14..19 of a 30-line block were on screen, and Ctrl-E moved through it
+    -- one row at a time. So the box needs no "fully visible" rule; what it needs is for the lane
+    -- that reconciles its marks to look at every row it owns, which is what this span asks for.
+    ctx.extend = ctx.extend or { first = sr - 1, last = end_row }
+    ctx.extend.first = math.min(ctx.extend.first, sr - 1)
+    ctx.extend.last = math.max(ctx.extend.last, end_row)
 
     -- The row the cursor is on, so the box can paint it like the cursor line. The source rows are
     -- hidden and Neovim draws no 'cursorline' over virtual lines, so without this the cursor would
@@ -2882,6 +2885,21 @@ local function emit_entity(ctx, node)
     end
 end
 
+--- The span of the boxed table `row` is inside, or nil. Public: the navigation keys need to know
+--- where the box BEGINS (its anchor is the row above `first`) to scroll the view through it.
+---@param buf integer
+---@param row integer  0-based
+---@return { first: integer, last: integer }|nil
+function M.boxed_span(buf, row)
+    local st = state.get(buf)
+    for first, last in pairs(st ~= nil and st.boxed or {}) do
+        if row >= first and row <= last then
+            return { first = first, last = last }
+        end
+    end
+    return nil
+end
+
 --- Is `row` a table SEPARATOR row that a BOX is currently hiding? The box draws its own junction
 --- line, so the source's `|---|---|` is a row with nothing of its own on screen — a stop the cursor
 --- makes for no reason. Public: the navigation keys ask through here rather than re-deriving it.
@@ -2918,6 +2936,8 @@ end
 ---@param bot integer  0-based last visible row (a guess is fine; extra rows cost nothing)
 ---@return LvimRenderOp[] ops
 ---@return { first: integer, last: integer }|nil reveal  the EFFECTIVE raw span for this window
+---@return { first: integer, last: integer }|nil extend  rows outside the visible range whose
+---   persistent marks this pass owns (a boxed table crossing the viewport edge)
 function M.collect(win, buf, top, bot)
     local st = state.get(buf)
     if st == nil or not st.enabled or st.inert ~= nil or st.raw then
@@ -2954,6 +2974,7 @@ function M.collect(win, buf, top, bot)
         text_width = nil,
         protect = {},
         skip_rows = {},
+        extend = nil,
     }
     if current and M.mode_reveals(mode) then
         local cur = api.nvim_win_get_cursor(win)[1] - 1
@@ -3103,7 +3124,7 @@ function M.collect(win, buf, top, bot)
     if reveal ~= nil then
         reveal = { first = ctx.eff_first, last = ctx.eff_last }
     end
-    return ctx.ops, reveal
+    return ctx.ops, reveal, ctx.extend
 end
 
 return M
