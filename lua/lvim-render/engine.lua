@@ -35,7 +35,7 @@ M.stats = { windows = 0, ops = 0, ns = 0 }
 ---@type string[]  the formats whose RENDERER exists — the phase gate. Config blocks for the
 --- others are already the fixed surface; a format joins this list when its phase lands, and only
 --- then do its buffers attach (so no window options are taken for a renderer that is not there).
-M.formats = { "markdown", "typst", "org" }
+M.formats = { "markdown", "typst", "org", "latex" }
 
 --- The format block a filetype belongs to, if any (enabled + implemented).
 ---@param ft string

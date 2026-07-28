@@ -93,6 +93,32 @@ local BLOCK_SRC = {
         (ref) @ref
         (escape) @escape
     ]],
+    -- LaTeX carries block and inline in ONE tree as well. What is captured here is only what
+    -- the renderer can draw HONESTLY: a sectioning command, an `\\item`, a listing environment, a
+    -- formula, the text-styling commands named in the config, and the reference family. Every
+    -- other macro is left exactly as written — a renderer that guessed at unknown macros would
+    -- hide source it does not understand.
+    latex = [[
+        (part) @heading
+        (chapter) @heading
+        (section) @heading
+        (subsection) @heading
+        (subsubsection) @heading
+        (paragraph) @heading
+        (subparagraph) @heading
+        (generic_environment) @tex_env
+        (enum_item) @tex_item
+        (listing_environment) @codeblock
+        (verbatim_environment) @codeblock
+        (inline_formula) @tex_math
+        (displayed_equation) @tex_math
+        (math_environment) @tex_math
+        (generic_command) @tex_command
+        (hyperlink) @tex_link
+        (label_definition) @tex_label
+        (label_reference) @tex_ref
+        (citation) @tex_cite
+    ]],
     -- Org, like typst, has ONE tree. Unlike either of the others it has no nodes for its inline
     -- markup at all: `*bold*` is a `str` between two bare `*` tokens inside an `expr` (the
     -- grammar's own `markup.scm` is written exactly that way, pairing a start token with an end
@@ -153,6 +179,17 @@ local function query_for(cache, key, lang, src)
     return cache[key] or nil
 end
 
+---@type table<string, true>  the LaTeX sectioning commands, as node types
+local LATEX_SECTIONS = {
+    part = true,
+    chapter = true,
+    section = true,
+    subsection = true,
+    subsubsection = true,
+    paragraph = true,
+    subparagraph = true,
+}
+
 --- Heading level of a heading node, read from its marker child. Every format spells that marker
 --- differently — markdown names the level in the node TYPE (`atx_h2_marker`), typst counts the
 --- `=` run — so the level is decoded here, once, rather than in the emitter.
@@ -160,6 +197,21 @@ end
 ---@return integer|nil level
 ---@return TSNode|nil marker  the marker node (atx/typst) or the underline node (setext)
 local function heading_level(node)
+    -- LATEX READS ITS LEVEL FROM THE NESTING, not from the command's name. The grammar makes a
+    -- `subsection` a CHILD of the `section` it follows, so a book's `\\chapter` and an article's
+    -- `\\section` are both the outermost thing in their document and both belong at level 1 — a
+    -- fixed command→level map would put an ordinary article's headings three shades in.
+    if LATEX_SECTIONS[node:type()] then
+        local level, parent = 1, node:parent()
+        while parent ~= nil do
+            if LATEX_SECTIONS[parent:type()] then
+                level = level + 1
+            end
+            parent = parent:parent()
+        end
+        local marker = node:child(0)
+        return math.min(level, 6), marker
+    end
     for child in node:iter_children() do
         local kind = child:type()
         local atx = kind:match("^atx_h(%d)_marker$")
@@ -190,6 +242,10 @@ end
 ---@field emphasis_delims table<string, true>  child types that are emphasis delimiters
 ---@field code_delims table<string, true>      child types that are code-span delimiters
 ---@field code_parts fun(node: TSNode, buf: integer): TSNode[], TSNode|nil, TSNode|nil, string|nil
+---@field code_conceal? fun(node: TSNode, buf: integer): { row: integer, col: integer, end_col: integer }[]
+---   ranges on the block's own rows that are marker rather than code — LaTeX's
+---   `[language=Python]` option, which the grammar hands back as the first characters of the
+---   source rather than as a node of its own
 
 --- How each format spells the same PART. Only the parts that genuinely differ live here; where
 --- two formats build an element the same way (an escape is a backslash before a character in
@@ -240,6 +296,67 @@ local SHAPE = {
                     -- info-string wrapper of its own.
                     lang_node = child
                     lang = ts.get_node_text(child, buf)
+                end
+            end
+            return delimiters, content, lang_node, lang
+        end,
+    },
+    latex = {
+        -- `\item`s nest by their ENVIRONMENT, so that is what counts as a level.
+        list_ancestor = "generic_environment",
+        code_conceal = function(node, buf)
+            for child in node:iter_children() do
+                if child:type() == "source_code" then
+                    local sr, sc = child:range()
+                    -- `\begin{lstlisting}[language=Python]` — the option run belongs to the
+                    -- marker, but the grammar puts it inside the SOURCE. Left alone it stood on
+                    -- the header band as if it were the block's first line of code.
+                    local head = ts.get_node_text(child, buf):match("^%[[^%]\n]*%]")
+                    if head ~= nil then
+                        return { { row = sr, col = sc, end_col = sc + #head } }
+                    end
+                    return {}
+                end
+            end
+            return {}
+        end,
+        -- LaTeX marks emphasis with a COMMAND, never with delimiters around the text — the
+        -- shared emitters that pair delimiters are therefore never called for it, and
+        -- `emit_latex_command` does the whole job instead.
+        emphasis_delims = {},
+        code_delims = {},
+        code_parts = function(node, buf)
+            ---@type TSNode[], TSNode|nil, TSNode|nil, string|nil
+            local delimiters, content, lang_node, lang = {}, nil, nil, nil
+            for child in node:iter_children() do
+                local kind = child:type()
+                if kind == "begin" or kind == "end" then
+                    delimiters[#delimiters + 1] = child
+                    if kind == "begin" and lang == nil then
+                        -- The environment names the language: `lstlisting` is not one, but
+                        -- `\begin{minted}{python}` carries it in a second group, and lstlisting's
+                        -- own `[language=Python]` option opens the source. Both are read; neither
+                        -- is invented.
+                        local groups = {}
+                        for sub in child:iter_children() do
+                            if sub:type() == "curly_group_text" then
+                                groups[#groups + 1] = sub
+                            end
+                        end
+                        if groups[2] ~= nil then
+                            lang_node = groups[2]
+                            lang = ts.get_node_text(groups[2], buf):gsub("[{}]", "")
+                        end
+                    end
+                elseif kind == "source_code" then
+                    content = child
+                    if lang == nil then
+                        local head = ts.get_node_text(child, buf):match("^%[[^%]\n]*%]")
+                        local named = head ~= nil and head:match("language%s*=%s*([%w_+-]+)") or nil
+                        if named ~= nil then
+                            lang = named:lower()
+                        end
+                    end
                 end
             end
             return delimiters, content, lang_node, lang
@@ -527,6 +644,23 @@ local function emit_heading(ctx, node, setext)
     end
     local sr, _, er, ec = node:range()
     local end_row = ec == 0 and er - 1 or er
+    -- A LATEX SECTION NODE IS THE WHOLE SECTION — the grammar nests everything that follows the
+    -- command inside it — so the heading's own extent is the command's line, not the node's. The
+    -- band otherwise painted from `\section` to the end of the document.
+    if LATEX_SECTIONS[node:type()] then
+        end_row = sr
+        if marker ~= nil then
+            local _, _, mer = marker:range()
+            end_row = math.max(sr, mer)
+        end
+        for child in node:iter_children() do
+            if child:type():sub(1, 11) == "curly_group" then
+                local _, _, ger = child:range()
+                end_row = math.max(end_row, ger)
+                break
+            end
+        end
+    end
     local raw = revealed(ctx, sr, end_row)
     local grp = highlights.heading_group(level)
     local spec = hconf.levels[level] or {}
@@ -566,6 +700,18 @@ local function emit_heading(ctx, node, setext)
     if not setext and hconf.conceal_markers and marker ~= nil and not raw then
         -- Only the `#` run itself; its trailing space stays visible as the gap.
         op(ctx, msr, msc, { end_col = mec, conceal = "", hl_group = grp })
+        -- LaTeX WRAPS ITS TITLE IN BRACES, and the braces are marker too: left on screen they
+        -- read as part of the heading's text.
+        if LATEX_SECTIONS[node:type()] then
+            for child in node:iter_children() do
+                if child:type():sub(1, 11) == "curly_group" then
+                    local gsr, gsc, ger, gec = child:range()
+                    op(ctx, gsr, gsc, { end_col = gsc + 1, conceal = "" })
+                    op(ctx, ger, gec - 1, { end_col = gec, conceal = "" })
+                    break
+                end
+            end
+        end
     end
     if setext and hconf.setext_underline ~= "" and marker ~= nil and not raw then
         local usr, usc, _, uec = marker:range()
@@ -879,6 +1025,11 @@ local function emit_codeblock(ctx, node)
             local dr, dc, _, dec = delim:range()
             op(ctx, dr, dc, { end_col = dec, conceal = "" })
         end
+        if ctx.shape.code_conceal ~= nil then
+            for _, range in ipairs(ctx.shape.code_conceal(node, ctx.buf)) do
+                op(ctx, range.row, range.col, { end_col = range.end_col, conceal = "" })
+            end
+        end
 
         -- THE CHIP: icon and language in ONE cell, a space on either side, painted in the icon's
         -- own colour on a tinted version of it — so the band says which language this is in the
@@ -1044,7 +1195,7 @@ end
 -- latex grammar is injected here (measured: the runtime injections carry only yaml and
 -- markdown_inline), so the tokenizer is a plain scan of the span's own text.
 
----@type { symbols: table<string, string>, sup: table<string, string>, sub: table<string, string> }|nil
+---@type { symbols: table<string, string>, sup: table<string, string>, sub: table<string, string>, typst: table<string, string> }|nil
 local math_maps = nil
 ---@type boolean  lvim-tex's data module was found (health reads this through M.math_available)
 local math_source = false
@@ -1055,7 +1206,7 @@ function M.invalidate_math()
 end
 
 --- The merged math maps, built lazily.
----@return { symbols: table<string, string>, sup: table<string, string>, sub: table<string, string> }
+---@return { symbols: table<string, string>, sup: table<string, string>, sub: table<string, string>, typst: table<string, string> }
 local function get_math_maps()
     if math_maps ~= nil then
         return math_maps
@@ -1082,7 +1233,16 @@ local function get_math_maps()
     for k, v in pairs(config.math.block.maps or {}) do
         symbols[k] = v
     end
-    math_maps = { symbols = symbols, sup = sup, sub = sub }
+    -- The typst names, resolved ONCE against the symbol table rather than at every lookup: the
+    -- alias points at a LaTeX command, and what that command renders as is the answer.
+    local typst = {}
+    for name, command in pairs(config.math.typst_aliases or {}) do
+        local repl = symbols["\\" .. command]
+        if repl ~= nil then
+            typst[name] = repl
+        end
+    end
+    math_maps = { symbols = symbols, sup = sup, sub = sub, typst = typst }
     return math_maps
 end
 
@@ -2185,8 +2345,12 @@ local function typst_formula(ctx, formula)
     ---@param node TSNode
     local function walk(node)
         local kind = node:type()
-        if kind == "ident" then
-            local repl = maps.symbols["\\" .. ts.get_node_text(node, ctx.buf)]
+        -- A DOTTED NAME IS ONE SYMBOL. `arrow.r` and `eq.not` arrive as `field` nodes whose
+        -- children are idents; reading the children separately would substitute neither and
+        -- conceal half a name. The whole field's text is the symbol's name.
+        if kind == "ident" or kind == "field" then
+            local name = ts.get_node_text(node, ctx.buf)
+            local repl = maps.typst[name] or maps.symbols["\\" .. name]
             if repl ~= nil and fn.strchars(repl) == 1 then
                 local r, c, _, ec = node:range()
                 op(ctx, r, c, { end_col = ec, conceal = repl, hl_group = "LvimRenderMathSymbol" })
@@ -2401,6 +2565,432 @@ local function emit_typst_term(ctx, node)
             priority = config.priorities.heading_text,
         })
     end
+end
+
+-- ── latex: the elements a .tex file is actually made of ──────────────────────
+--
+-- LaTeX writes everything as a macro, which is exactly why the renderer touches so little of it:
+-- only the commands the config NAMES are drawn, and every other macro stays as written. A
+-- renderer that guessed would hide source its reader still has to edit.
+
+--- The delimiter pair of a LaTeX formula, whichever of the three forms it is.
+---@param node TSNode
+---@return TSNode|nil open
+---@return TSNode|nil close
+---@return boolean display  `\[…\]` or a math ENVIRONMENT — a block, not an inline span
+local function latex_formula_delims(node)
+    local kind = node:type()
+    local first, last = nil, nil
+    for child in node:iter_children() do
+        local ck = child:type()
+        if ck == "$" or ck == "\\[" or ck == "\\(" or ck == "begin" then
+            first = first or child
+        elseif ck == "$" or ck == "\\]" or ck == "\\)" or ck == "end" then
+            last = child
+        end
+    end
+    -- `$…$` gives the SAME token type twice; the loop above keeps the first as `first` and the
+    -- second lands in `last` only because the second branch never sees it. Read them in order.
+    if kind == "inline_formula" then
+        first, last = nil, nil
+        for child in node:iter_children() do
+            if child:type() == "$" then
+                if first == nil then
+                    first = child
+                else
+                    last = child
+                end
+            end
+        end
+    end
+    return first, last, kind ~= "inline_formula"
+end
+
+--- A LaTeX formula: the delimiters conceal, the display forms get the band and the label, and
+--- the symbols run through the SHARED scanner — the same one markdown's `$…$` uses, so the
+--- single-character ceiling is one rule in one place.
+---@param ctx LvimRenderWalkCtx
+---@param node TSNode
+local function emit_latex_math(ctx, node)
+    local sr, _, er, ec = node:range()
+    local end_row = ec == 0 and er - 1 or er
+    if revealed(ctx, sr, end_row) then
+        return
+    end
+    local open, close, display = latex_formula_delims(node)
+    local mconf = display and config.math.block or config.math.inline
+    if not mconf.enabled then
+        return
+    end
+
+    if open ~= nil then
+        local osr, osc, _, oec = open:range()
+        op(ctx, osr, osc, { end_col = oec, conceal = "" })
+    end
+    if close ~= nil then
+        local csr, csc, _, cec = close:range()
+        op(ctx, csr, csc, { end_col = cec, conceal = "" })
+    end
+
+    if display then
+        if config.math.block.band then
+            for row = math.max(sr, ctx.first), math.min(end_row, ctx.last) do
+                op(ctx, row, 0, {
+                    end_row = row + 1,
+                    end_col = 0,
+                    hl_group = "LvimRenderMath",
+                    hl_eol = true,
+                    hl_mode = "combine",
+                    priority = config.priorities.band,
+                })
+            end
+        end
+        if config.math.block.label ~= "" then
+            op(ctx, sr, 0, {
+                virt_text = { { config.math.block.label, "LvimRenderMathLabel" } },
+                virt_text_pos = "right_align",
+                hl_mode = "combine",
+            })
+        end
+    end
+
+    -- The substitutable span is what lies BETWEEN the delimiters; on the rows in between, the
+    -- whole line.
+    local open_row, open_end = sr, open ~= nil and select(4, open:range()) or 0
+    local close_row, close_start = end_row, nil
+    if close ~= nil then
+        local crow, cstart = close:range()
+        close_row, close_start = crow, cstart
+    end
+    for row = math.max(sr, ctx.first), math.min(end_row, ctx.last) do
+        local line = line_at(ctx, row)
+        local seg_s = row == open_row and open_end or 0
+        local seg_e = (row == close_row and close_start ~= nil) and close_start or #line
+        if seg_e > seg_s then
+            for _, t in ipairs(math_tokens(line:sub(seg_s + 1, seg_e), seg_s)) do
+                op(ctx, row, t.s, { end_col = t.e, conceal = t.repl, hl_group = "LvimRenderMathSymbol" })
+            end
+        end
+    end
+end
+
+--- The name a LaTeX environment was opened with (`itemize` for `\\begin{itemize}`).
+---@param env TSNode  a `generic_environment` (or any node with a `begin` child)
+---@return string|nil
+local function latex_env_name(env)
+    for child in env:iter_children() do
+        if child:type() == "begin" then
+            for sub in child:iter_children() do
+                if sub:type() == "curly_group_text" then
+                    for leaf in sub:iter_children() do
+                        if leaf:type() == "text" then
+                            return vim.treesitter.get_node_text(leaf, 0)
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+---@type table<string, string>  a config style name → the group that draws it
+local LATEX_STYLE_GROUP = {
+    bold = "LvimRenderHtmlBold",
+    italic = "LvimRenderHtmlItalic",
+    underline = "LvimRenderHtmlUnderline",
+    strike = "LvimRenderHtmlStrike",
+    code = "LvimRenderCodeInline",
+}
+
+--- The command name and the braces of a `\command{argument}` — the parts that disappear when the
+--- argument is drawn in place.
+---@param node TSNode
+---@return TSNode|nil name
+---@return TSNode|nil group
+local function latex_command_parts(node)
+    local name, group = nil, nil
+    for child in node:iter_children() do
+        local kind = child:type()
+        if kind == "command_name" then
+            name = child
+        elseif kind == "curly_group" and group == nil then
+            group = child
+        end
+    end
+    return name, group
+end
+
+--- `\textbf{bold}` and its family: the command and its braces conceal, the argument keeps its
+--- place and takes the style. Only the commands the config names — an unknown macro is left
+--- alone, since concealing it would hide something the reader cannot then see to fix.
+---@param ctx LvimRenderWalkCtx
+---@param node TSNode
+local function emit_latex_command(ctx, node)
+    local econf = ctx.fconf.emphasis
+    if econf == nil or not econf.enabled then
+        return
+    end
+    local name, group = latex_command_parts(node)
+    if name == nil then
+        return
+    end
+    -- AN ESCAPE IS A COMMAND WITH NO ARGUMENT. `\%` is a `generic_command` whose whole name is a
+    -- backslash and one punctuation character — the same node an unknown macro arrives in, told
+    -- apart by having no braces after it. Only the backslash goes; the character stays.
+    local text = ts.get_node_text(name, ctx.buf)
+    if group == nil then
+        local escaped = text:match("^\\(%p)$")
+        local sconf = ctx.fconf.escapes
+        if escaped ~= nil and sconf ~= nil and sconf.enabled then
+            local esr, esc = name:range()
+            if not revealed(ctx, esr, esr) then
+                op(ctx, esr, esc, { end_col = esc + 1, conceal = "" })
+            end
+        end
+        return
+    end
+    local style = (econf.commands or {})[text]
+    if style == nil then
+        return
+    end
+    local sr, _, er, ec = node:range()
+    local end_row = ec == 0 and er - 1 or er
+    if revealed(ctx, sr, end_row) then
+        return
+    end
+    local gsr, gsc, ger, gec = group:range()
+    local nsr, nsc, _, nec = name:range()
+    -- The command name and the OPENING brace go together; the closing brace on its own.
+    op(ctx, nsr, nsc, { end_col = nec, conceal = "" })
+    op(ctx, gsr, gsc, { end_col = gsc + 1, conceal = "" })
+    op(ctx, ger, gec - 1, { end_col = gec, conceal = "" })
+
+    -- The HTML style groups: attribute-only (no fg, no bg), so the argument keeps whatever colour
+    -- the grammar gave it and merely gains the weight the command asked for.
+    local group_hl = LATEX_STYLE_GROUP[style]
+    if group_hl == nil then
+        return
+    end
+    op(ctx, gsr, gsc + 1, {
+        end_row = ger,
+        end_col = gec - 1,
+        hl_group = group_hl,
+        hl_mode = "combine",
+        priority = config.priorities.heading_text,
+    })
+end
+
+--- `\url{…}` and `\href{…}{label}`: the icon replaces the command, and `href` shows its LABEL
+--- with the target concealed — the same bargain the markdown link makes.
+---@param ctx LvimRenderWalkCtx
+---@param node TSNode
+local function emit_latex_link(ctx, node)
+    local lconf = ctx.fconf.links
+    if lconf == nil or not lconf.enabled then
+        return
+    end
+    local sr, sc, er, ec = node:range()
+    local end_row = ec == 0 and er - 1 or er
+    if revealed(ctx, sr, end_row) then
+        return
+    end
+    ---@type TSNode|nil, TSNode|nil, TSNode|nil
+    local command, uri_group, label_group = nil, nil, nil
+    for child in node:iter_children() do
+        local kind = child:type()
+        if kind == "curly_group_uri" then
+            uri_group = child
+        elseif kind == "curly_group" then
+            label_group = child
+        elseif command == nil and kind:sub(1, 1) == "\\" then
+            command = child
+        end
+    end
+    if uri_group == nil then
+        return
+    end
+    local icon = label_group ~= nil and lconf.icons.link or lconf.icons.auto
+    if command ~= nil then
+        local csr, csc, _, cec = command:range()
+        op(ctx, csr, csc, { end_col = cec, conceal = "" })
+        if icon ~= "" then
+            op(ctx, csr, cec, { virt_text = { { icon, "LvimRenderLink" } }, virt_text_pos = "inline" })
+        end
+    end
+    if not lconf.conceal then
+        return
+    end
+    local usr, usc, uer, uec = uri_group:range()
+    if label_group == nil then
+        -- `\url{…}`: only the braces go; the address IS the text.
+        op(ctx, usr, usc, { end_col = usc + 1, conceal = "" })
+        op(ctx, uer, uec - 1, { end_col = uec, conceal = "" })
+        op(ctx, usr, usc + 1, {
+            end_row = uer,
+            end_col = uec - 1,
+            hl_group = "LvimRenderLink",
+            hl_mode = "combine",
+        })
+        return
+    end
+    -- `\href{target}{label}`: the whole target group goes, the label's braces with it.
+    op(ctx, usr, usc, { end_row = uer, end_col = uec, conceal = "" })
+    local lsr, lsc, ler, lec = label_group:range()
+    op(ctx, lsr, lsc, { end_col = lsc + 1, conceal = "" })
+    op(ctx, ler, lec - 1, { end_col = lec, conceal = "" })
+    op(ctx, lsr, lsc + 1, {
+        end_row = ler,
+        end_col = lec - 1,
+        hl_group = "LvimRenderLink",
+        hl_mode = "combine",
+    })
+end
+
+--- `\label{…}` / `\ref{…}` / `\cite{…}`: the command and the braces conceal behind one icon and
+--- the NAME stays — which is the only part a reader is looking for.
+---@param ctx LvimRenderWalkCtx
+---@param node TSNode
+---@param conf table|nil  the format block for this family (labels / refs / citations)
+---@param hl string
+local function emit_latex_reference(ctx, node, conf, hl)
+    if conf == nil or not conf.enabled then
+        return
+    end
+    local sr, _, er, ec = node:range()
+    local end_row = ec == 0 and er - 1 or er
+    if revealed(ctx, sr, end_row) then
+        return
+    end
+    ---@type TSNode|nil, TSNode|nil
+    local command, group = nil, nil
+    for child in node:iter_children() do
+        local kind = child:type()
+        if kind:sub(1, 1) == "\\" and command == nil then
+            command = child
+        elseif kind:sub(1, 11) == "curly_group" then
+            group = child
+        end
+    end
+    if command == nil or group == nil then
+        return
+    end
+    local csr, csc, _, cec = command:range()
+    op(ctx, csr, csc, { end_col = cec, conceal = "" })
+    if conf.icon ~= "" then
+        op(ctx, csr, cec, { virt_text = { { conf.icon, hl } }, virt_text_pos = "inline" })
+    end
+    if conf.conceal == false then
+        return
+    end
+    local gsr, gsc, ger, gec = group:range()
+    op(ctx, gsr, gsc, { end_col = gsc + 1, conceal = "" })
+    op(ctx, ger, gec - 1, { end_col = gec, conceal = "" })
+    op(ctx, gsr, gsc + 1, { end_row = ger, end_col = gec - 1, hl_group = hl, hl_mode = "combine" })
+end
+
+--- A list ENVIRONMENT's own two rows. `\begin{itemize}` and `\end{itemize}` are punctuation, not
+--- content — hidden, a LaTeX list reads like a list in every other format. Only the environments
+--- the config calls lists; every other one keeps its rows, since hiding an unknown environment's
+--- delimiters would hide structure the reader still has to edit.
+---@param ctx LvimRenderWalkCtx
+---@param node TSNode
+local function emit_latex_environment(ctx, node)
+    local lconf = ctx.fconf.lists
+    if lconf == nil or not lconf.enabled or not lconf.conceal_environment then
+        return
+    end
+    if not (lconf.environments or {})[latex_env_name(node) or ""] then
+        return
+    end
+    local sr, _, er, ec = node:range()
+    local end_row = ec == 0 and er - 1 or er
+    if revealed(ctx, sr, end_row) then
+        return
+    end
+    for child in node:iter_children() do
+        local kind = child:type()
+        if kind == "begin" or kind == "end" then
+            local csr = child:range()
+            op(ctx, csr, 0, { conceal_lines = "" })
+        end
+    end
+end
+
+--- `\item`: the marker becomes the depth's bullet, or the item's NUMBER when its environment is
+--- an `enumerate` — LaTeX writes no number in the source, so counting the siblings is the only
+--- way to show the one the reader will see in the output.
+---@param ctx LvimRenderWalkCtx
+---@param node TSNode
+local function emit_latex_item(ctx, node)
+    local lconf = ctx.fconf.lists
+    if lconf == nil or not lconf.enabled then
+        return
+    end
+    ---@type TSNode|nil
+    local marker = nil
+    for child in node:iter_children() do
+        if child:type() == "\\item" then
+            marker = child
+            break
+        end
+    end
+    if marker == nil then
+        return
+    end
+    local msr, msc, _, mec = marker:range()
+    if revealed(ctx, msr, msr) then
+        return
+    end
+
+    -- The environment this item belongs to, and its position inside it.
+    local parent = node:parent()
+    local env_name, index = nil, 1
+    if parent ~= nil then
+        env_name = latex_env_name(parent)
+        for child in parent:iter_children() do
+            if child:type() == "enum_item" then
+                if child:id() == node:id() then
+                    break
+                end
+                index = index + 1
+            end
+        end
+    end
+
+    -- ONLY LIST ENVIRONMENTS COUNT. `document` and `center` are environments too, and counting
+    -- them started every top-level list one glyph in.
+    local lists = lconf.environments or {}
+    local depth = 0
+    local walker = node:parent()
+    while walker ~= nil do
+        if walker:type() == "generic_environment" and lists[latex_env_name(walker) or ""] then
+            depth = depth + 1
+        end
+        walker = walker:parent()
+    end
+    depth = math.max(1, depth)
+
+    local enum = lconf.enum
+    if env_name == "enumerate" and enum ~= nil and enum.enabled then
+        local text = (enum.format or "{n}."):gsub("{n}", tostring(index))
+        op(ctx, msr, msc, { end_col = mec, conceal = "" })
+        op(ctx, msr, mec, {
+            virt_text = { { text, highlights.bullet_group(depth) } },
+            virt_text_pos = "inline",
+        })
+        return
+    end
+    local bullets = lconf.bullets or {}
+    local glyph = bullets[(depth - 1) % math.max(#bullets, 1) + 1] or bullets[1]
+    if glyph == nil or glyph == "" then
+        return
+    end
+    op(ctx, msr, msc, { end_col = mec, conceal = "" })
+    op(ctx, msr, mec, {
+        virt_text = { { glyph, highlights.bullet_group(depth) } },
+        virt_text_pos = "inline",
+    })
 end
 
 -- ── org: markup without markup nodes ─────────────────────────────────────────
@@ -3191,6 +3781,25 @@ function M.collect(win, buf, top, bot)
                 emit_typst_ref(ctx, node)
             elseif name == "escape" then
                 emit_escape(ctx, node)
+            -- LaTeX: one tree, and only the macros the config names.
+            elseif name == "tex_env" then
+                emit_latex_environment(ctx, node)
+            elseif name == "tex_item" then
+                emit_latex_item(ctx, node)
+            elseif name == "tex_math" then
+                protect_node(ctx, node)
+                emit_latex_math(ctx, node)
+            elseif name == "tex_command" then
+                emit_latex_command(ctx, node)
+            elseif name == "tex_link" then
+                protect_node(ctx, node)
+                emit_latex_link(ctx, node)
+            elseif name == "tex_label" then
+                emit_latex_reference(ctx, node, ctx.fconf.labels, "LvimRenderTag")
+            elseif name == "tex_ref" then
+                emit_latex_reference(ctx, node, ctx.fconf.refs, "LvimRenderLink")
+            elseif name == "tex_cite" then
+                emit_latex_reference(ctx, node, ctx.fconf.citations, "LvimRenderLink")
             -- Org: one node type per element, and the inline markup scanned per paragraph.
             elseif name == "markup" then
                 emit_org_markup(ctx, node)

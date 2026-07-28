@@ -811,27 +811,89 @@ local M = {
     -- Standalone .tex buffers are lvim-tex's conceal domain: OFF by default, explicit opt-in only,
     -- documented as a double-decoration risk. LaTeX MATH inside markdown/org is `math` below.
     latex = {
-        enabled = false,
-        filetypes = { "tex" },
+        enabled = true,
+        filetypes = { "tex", "latex", "plaintex" },
+        -- THE GRAMMAR'S NAME, when it is not the filetype's. Neovim resolves a buffer's parser
+        -- from its filetype, and nothing in the runtime says that a `tex` buffer is parsed by the
+        -- `latex` grammar — so the query compiled against "tex", found no such language, and the
+        -- whole format rendered nothing at all. Declared here and registered by `setup()`, which
+        -- also makes plain `vim.treesitter.start` work in a .tex buffer for everyone else.
+        language = "latex",
         headings = {
-            enabled = false,
-            band = false,
-            conceal_markers = false,
+            enabled = true,
+            band = true,
+            conceal_markers = true,
             text = "accent",
+            -- LaTeX has no underlined heading form; the key stays for shape parity.
             setext_underline = "",
             levels = {
-                { icon = "󰉫", pad = 0 },
-                { icon = "󰉬", pad = 0 },
-                { icon = "󰉭", pad = 0 },
-                { icon = "󰉮", pad = 0 },
-                { icon = "󰉯", pad = 0 },
-                { icon = "󰉰", pad = 0 },
+                { icon = "󰉫", pad = 1 },
+                { icon = "󰉬", pad = 1 },
+                { icon = "󰉭", pad = 1 },
+                { icon = "󰉮", pad = 1 },
+                { icon = "󰉯", pad = 1 },
+                { icon = "󰉰", pad = 1 },
             },
         },
         lists = {
-            enabled = false,
+            enabled = true,
             bullets = { "●", "○", "◆", "◇" },
+            -- `enumerate` numbers its items, and LaTeX writes no number in the source at all —
+            -- so the marker renders as the item's position in its environment.
+            enum = { enabled = true, format = "{n}." },
+            -- The `\\begin{itemize}` / `\\end{itemize}` ROWS are the environment's punctuation, not
+            -- its content: hidden, a LaTeX list reads like a list in every other format. Off
+            -- leaves them on screen.
+            conceal_environment = true,
+            -- Which environments count as lists — for the nesting DEPTH and for the rows above.
+            -- `document` and `center` are environments too, and counting them put a top-level
+            -- itemize two levels in (measured: `○` where `●` belonged).
+            environments = { itemize = true, enumerate = true, description = true },
         },
+        emphasis = {
+            enabled = true,
+            -- COMMAND → how its argument is drawn. The command name and its braces conceal; the
+            -- text inside keeps its place and takes the style. Any command not named here is left
+            -- exactly as written — a renderer that guessed at unknown macros would hide code.
+            commands = {
+                ["\\textbf"] = "bold",
+                ["\\textit"] = "italic",
+                ["\\emph"] = "italic",
+                ["\\underline"] = "underline",
+                ["\\texttt"] = "code",
+                ["\\textsc"] = "bold",
+                ["\\sout"] = "strike",
+            },
+        },
+        code = {
+            enabled = true,
+            band = true,
+            label = true,
+            icon = "󰅩",
+            fences = "show",
+            position = "right",
+            icon_color = "devicon",
+            header = true,
+            air = 1,
+            pad = 2,
+            width = "full",
+        },
+        links = {
+            enabled = true,
+            -- `\url{…}` and `\href{…}{label}`; the icons match the markdown block's.
+            icons = { link = "󰌷 ", image = "󰋩 ", auto = "󰖟 ", wiki = "󰌹 ", embed = "󰋩 " },
+            conceal = true,
+        },
+        -- `\label{sec:x}` — the anchor. nf-md-tag, the command and braces concealed behind it.
+        labels = { enabled = true, icon = "󰓹 ", conceal = true },
+        -- `\ref{sec:x}` / `\eqref` / `\pageref` — a pointer at one.
+        refs = { enabled = true, icon = "󰌹 " },
+        -- `\cite{key}` — a pointer at the bibliography.
+        citations = { enabled = true, icon = "󰂺 " },
+        -- `\%` → `%`: the backslash conceals, the character shows plain.
+        escapes = { enabled = true },
+        -- The rule LaTeX actually has is a command, not a block element; the block stays for
+        -- shape parity with the other formats and draws nothing.
         rule = {
             enabled = false,
             glyph = "─",
@@ -842,6 +904,53 @@ local M = {
     -- unicode substitution lands at its phase; `image` is the experimental kitty tier — the only
     -- part of the plugin that spawns processes, and off until asked for.
     math = {
+        -- TYPST SPELLS THE SAME SYMBOLS DIFFERENTLY. The shared table is keyed by LaTeX commands
+        -- (`\\infty`), and typst writes `infinity`, `oo`, `arrow.r`, `eq.not` — names that never
+        -- matched, so a symbol with a perfectly good single-character rendering stayed raw. This
+        -- maps a typst name (dotted ones included — the grammar gives them as `field` nodes) onto
+        -- the LaTeX command that carries the glyph. Merged over by `setup()`, so a name typst adds
+        -- tomorrow is one config line, not a plugin release.
+        typst_aliases = {
+            oo = "infty",
+            infinity = "infty",
+            integral = "int",
+            ["integral.double"] = "iint",
+            ["integral.cont"] = "oint",
+            product = "prod",
+            diff = "partial",
+            gradient = "nabla",
+            nothing = "emptyset",
+            without = "setminus",
+            union = "cup",
+            sect = "cap",
+            prop = "propto",
+            ["eq.not"] = "neq",
+            ["lt.eq"] = "leq",
+            ["gt.eq"] = "geq",
+            ["plus.minus"] = "pm",
+            ["minus.plus"] = "mp",
+            ["in.not"] = "notin",
+            ["arrow.r"] = "rightarrow",
+            ["arrow.l"] = "leftarrow",
+            ["arrow.t"] = "uparrow",
+            ["arrow.b"] = "downarrow",
+            ["arrow.l.r"] = "leftrightarrow",
+            ["arrow.r.double"] = "Rightarrow",
+            ["arrow.l.double"] = "Leftarrow",
+            ["angle.l"] = "langle",
+            ["angle.r"] = "rangle",
+            ["dots.h"] = "ldots",
+            ["dots.v"] = "vdots",
+            ["dots.down"] = "ddots",
+            ["tilde.equiv"] = "cong",
+            ["tilde.op"] = "sim",
+            ["not"] = "neg",
+            ["and"] = "wedge",
+            ["or"] = "vee",
+            convolve = "ast",
+            dot = "cdot",
+            ["dot.op"] = "cdot",
+        },
         inline = { enabled = true, maps = {} },
         block = { enabled = true, label = "math", band = true, maps = {} },
         image = {

@@ -7,6 +7,10 @@
 
 local M = {}
 
+---@type boolean  setup() has run. Health reads it: a check that asks "is this registration in
+--- place" must not accuse a session that never set the plugin up (a bare `nvim -c checkhealth`).
+M.ready = false
+
 ---@class LvimRenderHeading
 ---@field row integer     0-based buffer row of the heading line
 ---@field level integer   1..6

@@ -6,8 +6,8 @@ line, and every heading folds its subtree with a rendered fold line and an org-s
 Turn it off and the buffer is exactly as it was, fold options included.
 
 Part of the [lvim-tech](https://github.com/lvim-tech) plugin set. It renders **markdown**,
-**typst** and **org**; the `asciidoc` and `latex` config blocks are the fixed surface their
-renderers will fill in later phases (health reports each format's status).
+**typst**, **org** and **latex**; the `asciidoc` block is the fixed surface its renderer will fill
+once a grammar for it is packaged (health reports each format's status).
 
 ## How it works
 
@@ -445,8 +445,12 @@ require("lvim-render").setup({
             label = true,
             icon = "󰅩",
             fences = "show",
-            position = "left",
-            icon_color = "accent",
+            position = "right",
+            icon_color = "devicon",
+            header = true,
+            air = 1,
+            pad = 2,
+            width = "full",
         },
         links = {
             enabled = true,
@@ -493,38 +497,83 @@ require("lvim-render").setup({
     },
     -- Standalone .tex buffers belong to lvim-tex: OFF by default, explicit opt-in only
     -- (double-decoration risk). LaTeX MATH inside markdown/org is `math` below.
+    -- LaTeX: a real renderer — the sectioning ladder read from the NESTING (an article's
+    -- `\section` and a book's `\chapter` are both the outermost thing in their document), and
+    -- only the macros named below are drawn. Every other macro is left exactly as written.
     latex = {
-        enabled = false,
-        filetypes = { "tex" },
+        enabled = true,
+        filetypes = { "tex", "latex", "plaintex" },
+        -- The GRAMMAR's name, when it is not the filetype's: nothing in Neovim's runtime says a
+        -- `tex` buffer is parsed by the `latex` grammar. setup() registers this.
+        language = "latex",
         headings = {
-            enabled = false,
-            band = false,
-            conceal_markers = false,
+            enabled = true,
+            band = true,
+            conceal_markers = true, -- the command AND its braces
             text = "accent",
-            setext_underline = "",
+            setext_underline = "", -- LaTeX has no underlined heading form
             levels = {
-                { icon = "󰉫", pad = 0 },
-                { icon = "󰉬", pad = 0 },
-                { icon = "󰉭", pad = 0 },
-                { icon = "󰉮", pad = 0 },
-                { icon = "󰉯", pad = 0 },
-                { icon = "󰉰", pad = 0 },
+                { icon = "󰉫", pad = 1 },
+                { icon = "󰉬", pad = 1 },
+                { icon = "󰉭", pad = 1 },
+                { icon = "󰉮", pad = 1 },
+                { icon = "󰉯", pad = 1 },
+                { icon = "󰉰", pad = 1 },
             },
         },
         lists = {
-            enabled = false,
+            enabled = true,
             bullets = { "●", "○", "◆", "◇" },
+            enum = { enabled = true, format = "{n}." }, -- enumerate writes no number in the source
+            conceal_environment = true, -- hide the \begin/\end rows of a list
+            environments = { itemize = true, enumerate = true, description = true },
         },
-        rule = {
-            enabled = false,
-            glyph = "─",
-            icon = "◆",
+        emphasis = {
+            enabled = true,
+            -- COMMAND → how its argument is drawn; anything not named here is left alone.
+            commands = {
+                ["\\textbf"] = "bold",
+                ["\\textit"] = "italic",
+                ["\\emph"] = "italic",
+                ["\\underline"] = "underline",
+                ["\\texttt"] = "code",
+                ["\\textsc"] = "bold",
+                ["\\sout"] = "strike",
+            },
         },
+        code = {
+            enabled = true,
+            band = true,
+            label = true,
+            icon = "󰅩",
+            fences = "show",
+            position = "right",
+            icon_color = "devicon",
+            header = true,
+            air = 1,
+            pad = 2,
+            width = "full",
+        },
+        links = {
+            enabled = true, -- \url{…} and \href{…}{label}
+            icons = { link = "󰌷 ", image = "󰋩 ", auto = "󰖟 ", wiki = "󰌹 ", embed = "󰋩 " },
+            conceal = true,
+        },
+        labels = { enabled = true, icon = "󰓹 ", conceal = true }, -- \label{…}
+        refs = { enabled = true, icon = "󰌹 " }, -- \ref{…}
+        citations = { enabled = true, icon = "󰂺 " }, -- \cite{…}
+        escapes = { enabled = true }, -- `\%` → `%`
+        -- LaTeX's rule is a command, not a block element; the block stays for shape parity.
+        rule = { enabled = false, glyph = "─", icon = "◆" },
     },
     -- Math is common, not a format: `$…$` / `$$…$$` appear inside markdown and org alike. The
     -- unicode substitution lands at its phase; `image` is the experimental kitty tier — the only
     -- part of the plugin that spawns processes, and off until asked for.
     math = {
+        -- Typst spells the same symbols differently (`infinity`, `arrow.r`); the shared table is
+        -- keyed by LaTeX commands, so these map a typst name onto the command that carries the
+        -- glyph. Merged over by setup() — a name typst adds tomorrow is one config line.
+        typst_aliases = { oo = "infty", integral = "int", ["arrow.r"] = "rightarrow" }, -- …and more
         inline = { enabled = true, maps = {} },
         block = { enabled = true, label = "math", band = true, maps = {} },
         image = {

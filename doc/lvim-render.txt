@@ -297,6 +297,37 @@ README.md; the reference below explains the options by group.
                       plugin's own single colour (`highlights.code_icon`).
                       The band (`highlights.code`) defaults to the palette's
                       darker bg_dark surface, the header to blue.
+`latex`           A REAL RENDERER. Its filetypes (`tex`, `latex`,
+                  `plaintex`) are parsed by the `latex` GRAMMAR, and nothing
+                  in Neovim's runtime says so — `language = "latex"` declares
+                  it and `setup()` registers the mapping. Without it every
+                  query compiled against a language that does not exist and
+                  the format rendered nothing while looking healthy.
+                  The heading LEVEL is the NESTING, not the command's name:
+                  the grammar makes a `subsection` a child of the section it
+                  follows, so an article's `\section` and a book's `\chapter`
+                  are both the outermost thing in their document and both
+                  take level 1. The heading's band stops at its own line —
+                  the node itself spans the whole section.
+                  `emphasis.commands` is a COMMAND → style map (bold, italic,
+                  underline, code, strike); a macro that is not named there is
+                  left exactly as written, since no renderer can know what
+                  someone's own macro means. `lists.conceal_environment`
+                  hides the `\begin{itemize}` / `\end{itemize}` rows, and
+                  `lists.environments` says which environments count as lists
+                  — `document` and `center` are environments too, and counting
+                  them started every top-level list one glyph in.
+                  `labels` / `refs` / `citations` draw `\label`, `\ref` and
+                  `\cite` as an icon plus the name. The three formula forms
+                  (`$…$`, `\[…\]`, a math environment) run through the SAME
+                  symbol table markdown's math uses.
+`math.typst_aliases`
+                  Typst spells the same symbols differently — `infinity`,
+                  `oo`, `arrow.r`, `eq.not` — and the shared table is keyed by
+                  LaTeX commands, so those names never matched and a symbol
+                  with a perfectly good one-character rendering stayed raw.
+                  This maps a typst name (dotted ones included) onto the LaTeX
+                  command that carries the glyph.
 `markdown.quotes`     `border` ("▍") — what every `>` is redrawn as, per
                       nesting depth accent, on continuation rows too.
                       `repeat_on_wrap` (false) repeats the border on WRAPPED

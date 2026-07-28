@@ -209,9 +209,20 @@ end
 ---@return nil
 function M.setup(opts)
     merge(config, opts or {})
+    state.ready = true
     highlights.setup()
     -- The math maps merge user config over lvim-tex's shared data; a repeat setup() rebuilds.
     require("lvim-render.render").invalidate_math()
+
+    -- A FORMAT WHOSE GRAMMAR IS NOT NAMED AFTER ITS FILETYPE says so, and the mapping is
+    -- registered before anything asks for a parser: `tex` is parsed by `latex`, and without this
+    -- every query compiled against a language that does not exist.
+    for _, format in ipairs(engine.formats) do
+        local fconf = config[format]
+        if type(fconf) == "table" and fconf.enabled and type(fconf.language) == "string" then
+            pcall(vim.treesitter.language.register, fconf.language, fconf.filetypes or {})
+        end
+    end
 
     -- The fence-visibility mode edits the LANGUAGE's highlight query (strip conceal_lines), so it
     -- applies per format language, before any buffer attaches or re-attaches. EVERY implemented

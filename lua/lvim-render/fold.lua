@@ -47,6 +47,29 @@ local QUERY_SRC = {
         (headline) @atx
         (table) @tbl
     ]],
+    -- LaTeX's sectioning commands. A `tabular` is an environment like any other and folding it
+    -- as a table would fold the environment's own rows with it, so `fold.tables` has nothing
+    -- to fold here either.
+    latex = [[
+        (part) @atx
+        (chapter) @atx
+        (section) @atx
+        (subsection) @atx
+        (subsubsection) @atx
+        (paragraph) @atx
+        (subparagraph) @atx
+    ]],
+}
+
+---@type table<string, true>  the LaTeX sectioning commands, as node types
+local LATEX_SECTIONS = {
+    part = true,
+    chapter = true,
+    section = true,
+    subsection = true,
+    subsubsection = true,
+    paragraph = true,
+    subparagraph = true,
 }
 
 --- Compile (once) and return the outline query for a format.
@@ -70,6 +93,19 @@ end
 ---@param node TSNode
 ---@return integer|nil level
 local function heading_level(node)
+    -- LaTeX reads its level from the NESTING (the grammar makes a subsection a child of its
+    -- section), so an article's `\\section` and a book's `\\chapter` are both level 1 — the same
+    -- rule the renderer applies, kept in step with it here.
+    if LATEX_SECTIONS[node:type()] then
+        local level, parent = 1, node:parent()
+        while parent ~= nil do
+            if LATEX_SECTIONS[parent:type()] then
+                level = level + 1
+            end
+            parent = parent:parent()
+        end
+        return math.min(level, 6)
+    end
     for child in node:iter_children() do
         local kind = child:type()
         local m = kind:match("^atx_h(%d)_marker$") or kind:match("^setext_h(%d)_underline$")
@@ -111,6 +147,10 @@ local function heading_title(node, buf)
         -- Org: the title (with its TODO keyword and tags, as written) is the `item` child.
         if kind == "item" then
             return (ts.get_node_text(child, buf):match("[^\n]*"))
+        end
+        -- LaTeX: the title is the command's braced argument, and the braces are not part of it.
+        if kind:sub(1, 11) == "curly_group" then
+            return (ts.get_node_text(child, buf):match("[^\n]*"):gsub("^{", ""):gsub("}$", ""))
         end
     end
     return ""

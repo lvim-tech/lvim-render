@@ -157,6 +157,38 @@ function M.check()
         end
     end
 
+    -- A format whose grammar is not named after its filetype needs the mapping registered, and a
+    -- missing one is invisible: the buffer attaches, the plugin runs, and every query silently
+    -- compiles against a language that does not exist.
+    for _, format in ipairs(state.ready and engine.formats or {}) do
+        local fconf = config[format]
+        if type(fconf) == "table" and fconf.enabled and type(fconf.language) == "string" then
+            local mapped = true
+            for _, ft in ipairs(fconf.filetypes or {}) do
+                if vim.treesitter.language.get_lang(ft) ~= fconf.language then
+                    mapped = false
+                    health.error(
+                        ("%s: filetype %q does not resolve to the %q grammar — nothing would render"):format(
+                            format,
+                            ft,
+                            fconf.language
+                        ),
+                        { "setup() registers this; a later vim.treesitter.language.register may have overridden it." }
+                    )
+                end
+            end
+            if mapped then
+                health.ok(
+                    ("%s: %s → the %q grammar"):format(
+                        format,
+                        table.concat(fconf.filetypes or {}, ", "),
+                        fconf.language
+                    )
+                )
+            end
+        end
+    end
+
     -- ── attached buffers ────────────────────────────────────────────────────
     health.start("lvim-render: buffers")
     local any = false
@@ -439,7 +471,7 @@ function M.check()
 
     -- The code block's chrome, per format: a band that cannot be drawn, an inset nobody asked for,
     -- or a width nobody recognises all fail SILENTLY at draw time — named here instead.
-    for _, format in ipairs({ "markdown", "org", "typst" }) do
+    for _, format in ipairs({ "markdown", "org", "typst", "latex" }) do
         local cconf = (config[format] or {}).code
         if type(cconf) == "table" then
             local where = format .. ".code"
