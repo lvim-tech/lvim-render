@@ -64,8 +64,10 @@ end
 
 --- The callout candidates, from the live config.
 ---@param fconf table
+---@param closed boolean  a `]` already stands right after the cursor (a pair plugin closed the
+---   bracket the reader opened), so the candidate must not bring a second one
 ---@return table[]
-local function callout_items(fconf)
+local function callout_items(fconf, closed)
     local callouts = fconf.callouts or {}
     if not callouts.enabled then
         return {}
@@ -75,15 +77,27 @@ local function callout_items(fconf)
         local key = tostring(t.key or ""):upper()
         if key ~= "" then
             items[#items + 1] = {
+                -- The ENGINE'S shape, not a raw LSP item: `raw` is the insert/resolve target and
+                -- the flat fields are what the menu and the ranker read. A candidate that carried
+                -- only `insertText`/`sortText` was a raw item in the engine's slot — it inserted
+                -- its label instead of the text, and its missing `filter_text` misaligned the
+                -- fuzzy set for every source that answered after it.
+                raw = {
+                    label = key,
+                    -- The inserted text closes the bracket the reader opened, so accepting leaves
+                    -- a complete `> [!NOTE]` rather than something that still needs a `]` — unless
+                    -- a pair plugin already put one there, in which case a second would be one too
+                    -- many (measured with lvim-pairs: `- [` becomes `- []` as it is typed).
+                    insertText = key .. (closed and "" or "]"),
+                    detail = tostring(t.label or t.key or ""),
+                },
+                source_name = M.name,
                 label = key,
-                -- The inserted text closes the bracket the user opened, so accepting leaves a
-                -- complete `> [!NOTE]` rather than something that still needs a `]`.
-                insertText = key .. "]",
-                kind = KIND_ENUM,
+                filter_text = key,
                 -- Config order, not alphabetical: the author ordered them by how often they are
                 -- reached for, and re-sorting would discard that.
-                sortText = ("%02d"):format(i),
-                detail = tostring(t.label or t.key or ""),
+                sort_text = ("%02d"):format(i),
+                kind = KIND_ENUM,
                 icon = t.icon,
             }
         end
@@ -93,8 +107,9 @@ end
 
 --- The checkbox candidates, from the live config.
 ---@param fconf table
+---@param closed boolean  a `]` already stands right after the cursor — see `callout_items`
 ---@return table[]
-local function checkbox_items(fconf)
+local function checkbox_items(fconf, closed)
     local boxes = fconf.checkboxes or {}
     if not boxes.enabled then
         return {}
@@ -106,12 +121,14 @@ local function checkbox_items(fconf)
         local norm = char:lower()
         if char ~= "" and not seen[norm] then
             seen[norm] = true
+            local label = char == " " and "[ ] unchecked" or ("[" .. char .. "]")
             items[#items + 1] = {
-                label = char == " " and "[ ] unchecked" or ("[" .. char .. "]"),
-                insertText = char .. "] ",
+                raw = { label = label, insertText = char .. (closed and "" or "] "), detail = s.icon },
+                source_name = M.name,
+                label = label,
+                filter_text = char == " " and "unchecked" or char,
+                sort_text = ("%02d"):format(i),
                 kind = KIND_CONSTANT,
-                sortText = ("%02d"):format(i),
-                detail = s.icon,
                 icon = s.icon,
             }
         end
@@ -145,11 +162,13 @@ M.source = {
     end,
 
     ---@param _ integer
-    ---@return string[]
+    ---@return table<string, boolean>
     trigger_chars = function(_)
         -- `!` opens the callout menu the moment the discriminator is typed; `[` opens the checkbox
         -- one. Both are cheap: `enabled` rejects every position where they mean something else.
-        return { "!", "[" }
+        -- A SET, keyed by the character — the registry reads this table's KEYS, so a list would
+        -- contribute the indices 1 and 2 and the source would never trigger at all.
+        return { ["!"] = true, ["["] = true }
     end,
 
     ---@param ctx table
@@ -162,11 +181,13 @@ M.source = {
             return
         end
         local kind = what_at(ctx.line:sub(1, ctx.cursor[2]))
+        -- What already stands after the cursor decides whether the candidate closes the bracket.
+        local closed = ctx.line:sub(ctx.cursor[2] + 1, ctx.cursor[2] + 1) == "]"
         local items = {}
         if kind == "callout" then
-            items = callout_items(fconf)
+            items = callout_items(fconf, closed)
         elseif kind == "checkbox" then
-            items = checkbox_items(fconf)
+            items = checkbox_items(fconf, closed)
         end
         cb(items, false)
     end,
