@@ -282,7 +282,7 @@
 ---@field reveal LvimRenderRevealConfig
 ---@field conceal LvimRenderConcealConfig
 ---@field split LvimRenderSplitConfig
----@field tables_editor { title: string, width: number, height: number, border: string[]|string, keys: table<string, string|false> }
+---@field tables_editor { title: string, width: number, height: number, border: string[]|string, table_mode: boolean, keys: table<string, string|false> }
 ---   the full-screen table editor: its title, its size (fractions of the editor), and its own
 ---   buffer-local keys. The key that OPENS it is the reader's, through `:LvimRender table`
 ---@field tables_insert_opens_editor boolean  entering insert inside a boxed table opens the
@@ -290,6 +290,9 @@
 ---@field tables_box_reveal boolean  a table drawn as a BOX reveals on insert like every other
 ---   element. False by default: a boxed table is not edited in the buffer — its rows are hidden
 ---   and `:LvimRender table` is where its cells change — so the reveal would only break the view
+---@field tables_nav_step_over boolean  j/k treat a boxed table as ONE stop, like a closed fold.
+---   The alternative (walking its rows) cannot scroll into the table from beyond the window edge:
+---   its rows are hidden, so the cursor-visibility rule has nothing to scroll to
 ---@field tables_nav_keys { down: string|false, up: string|false }  buffer-local motions that step
 ---   over a table separator row a box is hiding — the only buffer row inside a box that draws
 ---   nothing of its own
@@ -366,6 +369,11 @@ local M = {
         -- it is a native border-title, which needs a border to sit on but not a visible one.
         -- Any Neovim 'border' value works here: a list of eight cells, or a name like "rounded".
         border = { " ", " ", " ", " ", " ", " ", " ", " " },
+        -- Turn lvim-table's TABLE MODE on in the editor's buffer when that sibling is installed: it
+        -- realigns the block as you type, so the grid never drifts while a cell grows, and it adds
+        -- its cell text objects and row/column operators on top. Optional — without it the editor's
+        -- own `<C-a>` realign and structure keys do the same work by hand.
+        table_mode = true,
         -- Buffer-local, only inside the editor. No <Leader> key opens it: the OPENING key belongs
         -- to the reader's own central keymap (`:LvimRender table` is the seam) — these are the
         -- editor's internal keys, which stay with the plugin that owns the window.
@@ -378,6 +386,8 @@ local M = {
             column_add = "<C-c>",
             column_delete = "<C-x>",
             realign = "<C-a>",
+            -- The set's canonical cheatsheet key.
+            help = "g?",
         },
     },
     -- Entering insert inside a table drawn as a BOX opens the EDITOR instead. 'concealcursor' is
@@ -390,6 +400,21 @@ local M = {
     -- the box apart on `i` would break the view for an edit that does not happen there. Set true
     -- to get the old behaviour — the table shown raw, in place, whenever you enter insert in it.
     tables_box_reveal = false,
+    -- Does j/k treat a table drawn as a BOX as ONE stop, the way it treats a closed fold?
+    --
+    -- TRUE (default) — the cursor RESTS ON the table as one stop and `i` there opens the editor,
+    -- exactly as a closed fold is one stop that `zo` opens. It never jumps over: a table you cannot
+    -- put the cursor on is a table you cannot open. The alternative was
+    -- tried and is structurally broken, not merely awkward: the box HIDES the table's rows, so they
+    -- have no screen height, and Neovim's rule that the cursor stays visible then fights every
+    -- scroll. Measured: CTRL-Y scrolls (topline 132→131→130) but drags the cursor with it
+    -- (136→135→134); `winrestview` does not move at all, because the view snaps back to the
+    -- nearest thing it can show — which left `k` unable to scroll up out of a table entirely.
+    --
+    -- FALSE — the cursor walks the rows one by one and the box paints the row it is on, which
+    -- reads nicely as long as the whole table is already on screen; approach one from beyond the
+    -- window's edge and the view will stick, for the reason above.
+    tables_nav_step_over = true,
     -- j/k inside an attached buffer STEP OVER a table separator row that a box is hiding: the box
     -- draws its own junction line, so the source's `|---|---|` shows nothing of its own and
     -- stopping on it is a stop for nothing. Set either to false to leave that key alone.

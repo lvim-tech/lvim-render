@@ -359,27 +359,24 @@ function M.attach(buf)
                     pcall(vim.cmd, ("normal! %s"):format(delta < 0 and "k" or "j"))
                     row = api.nvim_win_get_cursor(0)[1] - 1
                 end
-                -- THE VIEW HAS TO BE LED THROUGH THE BOX. A boxed table's rows are hidden, so they
-                -- have no screen height of their own and Neovim has nothing to scroll TO: walking
-                -- up into a table whose bottom sits at the top of the window simply stopped, the
-                -- cursor moving in a buffer that would not follow (reported). The box's lines
-                -- belong to the row ABOVE the table, so the view is nudged one screen line per
-                -- keypress while the cursor is inside and that block is not yet fully shown —
-                -- which tracks, since one source row is one or more box lines.
-                -- THE VIEW MOVES, THE CURSOR DOES NOT. CTRL-Y/CTRL-E were the obvious way to nudge
-                -- it and the wrong one: they push the CURSOR back into view when it would fall out,
-                -- so a `k` next to a box moved the cursor DOWN instead of up (reported, twice in a
-                -- row). `winrestview` scrolls without touching the cursor, and the cursor is passed
-                -- back explicitly so nothing can drift.
-                local span = render.boxed_span(buf, row)
+                -- A BOXED TABLE IS ONE STOP — the closed-fold model, and the cursor RESTS ON IT
+                -- rather than jumping over it. That distinction is the whole point: a table you
+                -- cannot put the cursor on is a table you cannot open, and `i` on it is how the
+                -- editor is reached.
+                --
+                -- Walking the cursor through the table's own rows is what cannot work, and the
+                -- reason is structural rather than awkward: those rows are HIDDEN, so they have no
+                -- screen height, and Neovim's rule that the cursor stays visible then fights every
+                -- scroll. Measured — CTRL-Y scrolls (topline 132→131→130) but drags the cursor with
+                -- it (136→135→134); `winrestview` does not move at all, because the view snaps back
+                -- to the nearest thing it can show. One stop needs neither: the box is either on
+                -- screen or scrolled past as a unit.
+                local span = config.tables_nav_step_over and render.boxed_span(buf, row) or nil
                 if span ~= nil then
-                    local view = vim.fn.winsaveview()
-                    local pos = api.nvim_win_get_cursor(0)
-                    if delta < 0 and view.topline > span.first + 1 then
-                        vim.fn.winrestview({ topline = view.topline - 1, lnum = pos[1], col = pos[2] })
-                    elseif delta > 0 and vim.fn.line("w$") < span.last + 1 then
-                        vim.fn.winrestview({ topline = view.topline + 1, lnum = pos[1], col = pos[2] })
-                    end
+                    -- Landing on the FIRST row from either direction, exactly as a closed fold puts
+                    -- the cursor on its first line however you arrive at it.
+                    local total = api.nvim_buf_line_count(buf)
+                    api.nvim_win_set_cursor(0, { math.max(1, math.min(span.first + 1, total)), 0 })
                 end
             end, {
                 buffer = buf,

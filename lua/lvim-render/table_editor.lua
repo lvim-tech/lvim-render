@@ -365,6 +365,45 @@ local function realign(ed)
     api.nvim_win_set_cursor(0, { math.min(pos[1], api.nvim_buf_line_count(ed)), pos[2] })
 end
 
+--- The cheatsheet, through the SET'S OWN component (`lvim-ui.help`): the rows, the striping, the
+--- tints and the hidden cursor all live there, so this window looks like every other `?` window in
+--- the editor and follows a palette change with them. Only the CONTENT is this module's — and it is
+--- read from the LIVE keys, so a rebound key is described by its new binding, never by a literal
+--- copied into a table here.
+---@return nil
+local function show_help()
+    local keys = config.tables_editor.keys
+    ---@type [string, string][]
+    local items = {}
+    local function row(name, description)
+        local lhs = keys[name]
+        if type(lhs) == "string" and lhs ~= "" then
+            items[#items + 1] = { lhs, description }
+        end
+    end
+    row("commit", "write the table back — reformatted — and close")
+    items[#items + 1] = { "q / <Esc>", "close without writing anything back" }
+    row("next_cell", "move to the next cell (wraps to the next row)")
+    row("prev_cell", "move to the previous cell")
+    row("row_add", "add a row below this one")
+    row("row_delete", "delete this row")
+    row("column_add", "add a column after this one")
+    row("column_delete", "delete this column")
+    row("realign", "re-align the columns after an edit widened a cell")
+    row("help", "this window")
+    -- Only when the sibling is actually there: describing keys that are not mapped is worse than
+    -- describing none.
+    if config.tables_editor.table_mode and pcall(require, "lvim-table") then
+        items[#items + 1] = { "", "" }
+        items[#items + 1] = { "i| / a|", "lvim-table: the cell as a text object (inner / around)" }
+        items[#items + 1] = { "[| / ]|", "lvim-table: jump a cell left / right" }
+        items[#items + 1] = { "{| / }|", "lvim-table: jump a cell up / down" }
+        items[#items + 1] = { "<leader>t…", "lvim-table: its own row / column operators" }
+        items[#items + 1] = { "", "the columns re-align as you type — table mode is on here" }
+    end
+    require("lvim-ui").help({ title = "Table editor", items = items })
+end
+
 --- Wire the editor's own keys onto its buffer.
 ---@param ed integer
 ---@return nil
@@ -403,6 +442,7 @@ local function set_keys(ed)
     map(keys.realign, function()
         realign(ed)
     end, { "n" })
+    map(keys.help, show_help, { "n" })
 end
 
 --- Open the editor for the table under the cursor.
@@ -512,6 +552,18 @@ function M.open(buf)
             vim.cmd("stopinsert")
         end
         vim.bo[ed].modifiable = true
+        -- LVIM-TABLE'S TABLE MODE, in the editor's own buffer. It realigns the block as you type,
+        -- which is precisely the thing this editor would otherwise re-implement — and it brings its
+        -- cell text objects (`i|`, `a|`, `[|`, `]|`) and its `<leader>t…` row/column operators with
+        -- it. An optional sibling: absent, the editor keeps its own `<C-a>` realign and structure
+        -- keys, which is why those are not removed. Enabled BEFORE the editor's own keys, so `<CR>`
+        -- still means "write the table back" — table mode maps that key too.
+        if config.tables_editor.table_mode then
+            local ok_tbl, lvim_table = pcall(require, "lvim-table")
+            if ok_tbl and type(lvim_table.enable) == "function" then
+                pcall(lvim_table.enable, ed)
+            end
+        end
         -- AFTER the surface, deliberately. The panel hosts THIS buffer, so the chassis maps its own
         -- navigation keys onto it — including <CR>, which it reads as "activate the focused button".
         -- Here <CR> means "write the table back", and the editor's keys have to be the last word on
