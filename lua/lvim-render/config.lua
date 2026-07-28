@@ -409,18 +409,15 @@ local M = {
     -- topline inside the hidden run away. Three honest answers, none of them a cursor walking
     -- hidden lines:
     --
-    --   "widget" — NOT yet the default: it is implemented but not yet proven in live use (the
-    --     first measurement showed the index engaging while the cursor stuck to the anchor, and a
-    --     mapping that fires many times per keypress; that needs its own pass). The real cursor
-    --     parks on the DISPLAYED row above the table and j/k
+    --   "widget" (default) — the real cursor parks on the DISPLAYED row above the table and j/k
     --     move a logical row index inside the box, which repaints with that row active. Walking the
     --     table row by row, without ever asking the view to scroll to a zero-height line. Leaving
     --     either end hands the cursor back to the buffer.
-    --   "stop" (default) — the table is ONE stop the cursor rests on, like a closed fold; `i`
-    --     opens the editor from there. Verified in live use.
+    --   "stop"   — the table is ONE stop the cursor rests on, like a closed fold; `i` opens the
+    --     editor from there.
     --   "raw"    — no special handling: j/k walk the hidden rows. The cursor is then invisible
     --     inside the table and the view will stick when approaching from beyond the window's edge.
-    tables_nav_mode = "stop",
+    tables_nav_mode = "widget",
     -- j/k inside an attached buffer STEP OVER a table separator row that a box is hiding: the box
     -- draws its own junction line, so the source's `|---|---|` shows nothing of its own and
     -- stopping on it is a stop for nothing. Set either to false to leave that key alone.
