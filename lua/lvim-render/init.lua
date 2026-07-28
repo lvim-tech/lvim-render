@@ -213,10 +213,15 @@ function M.setup(opts)
     -- The math maps merge user config over lvim-tex's shared data; a repeat setup() rebuilds.
     require("lvim-render.render").invalidate_math()
 
-    -- The fence-visibility mode edits the LANGUAGE's highlight query (strip conceal_lines), so
-    -- it applies per format language, before any buffer attaches or re-attaches.
-    if config.markdown.enabled and config.markdown.code ~= nil then
-        queries.apply("markdown", config.markdown.code.fences)
+    -- The fence-visibility mode edits the LANGUAGE's highlight query (strip conceal_lines), so it
+    -- applies per format language, before any buffer attaches or re-attaches. EVERY implemented
+    -- format, not markdown alone: the mechanism is language-agnostic, and a format whose query
+    -- hides nothing simply records that it had nothing to strip.
+    for _, format in ipairs(engine.formats) do
+        local fconf = config[format]
+        if type(fconf) == "table" and fconf.enabled and fconf.code ~= nil then
+            queries.apply(format, fconf.code.fences)
+        end
     end
 
     -- Registered on every setup(): a repeat call may have changed the callout types, and the source

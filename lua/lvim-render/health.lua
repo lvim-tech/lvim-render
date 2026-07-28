@@ -702,7 +702,7 @@ function M.check()
                 )
             end
             if fconf.code.fences == "show" then
-                local qs = queries.state[format == "markdown" and "markdown" or format]
+                local qs = queries.state[format]
                 if qs ~= nil and qs.mode == "show" and qs.stripped > 0 then
                     health.ok(
                         ('%s.code.fences = "show": %d conceal_lines directive(s) stripped from the highlight query'):format(
@@ -711,14 +711,17 @@ function M.check()
                         )
                     )
                 elseif qs ~= nil and qs.mode == "show" then
-                    health.warn(
-                        format .. '.code.fences = "show" but the resolved highlight query had NO conceal_lines to strip',
-                        {
-                            "Upstream may have changed how fence lines are hidden; fences may still disappear.",
-                        }
+                    -- Not a defect: only markdown's shipped query hides the fence LINES. Nothing to
+                    -- strip means nothing is owned, which is the quieter of the two good outcomes.
+                    health.ok(
+                        ('%s.code.fences = "show": its highlight query hides no lines — nothing to own'):format(
+                            format
+                        )
                     )
                 else
-                    health.warn(format .. '.code.fences = "show" but no query override is active (setup order?)')
+                    health.warn(format .. '.code.fences = "show" but the query was never resolved (setup order?)', {
+                        "setup() applies this per format; a format reaching here was skipped.",
+                    })
                 end
             elseif fconf.code.fences ~= "hide" then
                 health.error(

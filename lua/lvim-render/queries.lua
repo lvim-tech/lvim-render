@@ -77,6 +77,15 @@ function M.apply(lang, mode)
         return
     end
     local overridden, stripped = M.strip_fence_conceals(source)
+    if stripped == 0 then
+        -- NOTHING TO OWN. Only markdown's shipped query hides the fence LINES; org and typst mark
+        -- their block markers without `conceal_lines`, so installing an identical copy of their
+        -- query would take responsibility for text this plugin never changed — and would freeze it
+        -- at today's upstream. The state is still recorded, so health can tell "there was nothing
+        -- to strip" apart from "this never ran".
+        M.state[lang] = { mode = "show", stripped = 0, original = source }
+        return
+    end
     local ok = pcall(vim.treesitter.query.set, lang, "highlights", overridden)
     if ok then
         M.state[lang] = { mode = "show", stripped = stripped, original = source }
