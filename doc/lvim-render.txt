@@ -1,0 +1,860 @@
+*lvim-render.txt*                       In-buffer document rendering, in place
+
+==============================================================================
+CONTENTS                                                *lvim-render-contents*
+
+    1. Introduction ........................... |lvim-render-introduction|
+    2. Requirements ........................... |lvim-render-requirements|
+    3. Installation ........................... |lvim-render-installation|
+    4. Configuration .......................... |lvim-render-configuration|
+       4.1 Common options ..................... |lvim-render-config-common|
+       4.2 Folding ............................ |lvim-render-config-fold|
+       4.3 The markdown format ................ |lvim-render-config-markdown|
+       4.4 The other formats .................. |lvim-render-config-formats|
+       4.5 Colours ............................ |lvim-render-config-colours|
+       4.6 Preview and completion ............. |lvim-render-config-preview|
+    5. Commands ............................... |lvim-render-commands|
+    6. Keys ................................... |lvim-render-keys|
+    7. The reveal ............................. |lvim-render-reveal|
+    8. Folding ................................ |lvim-render-folding|
+    9. API .................................... |lvim-render-api|
+   10. The side-by-side preview ............... |lvim-render-split|
+   10a The table editor ..................... |lvim-render-table-editor|
+   11. Completion ............................. |lvim-render-completion|
+   12. Typst .................................. |lvim-render-typst-render|
+   13. Org .................................... |lvim-render-org-render|
+   14. Highlight groups ....................... |lvim-render-highlights|
+   15. How it works ........................... |lvim-render-internals|
+   16. Health ................................. |lvim-render-health|
+
+==============================================================================
+1. INTRODUCTION                                     *lvim-render-introduction*
+
+lvim-render decorates the buffer you are EDITING, in place. Headings become
+coloured bands with level icons and their `#` markers concealed; list markers
+become glyphs per nesting depth; checkboxes render as one coloured glyph per
+state; a `---` line is drawn across the window; emphasis markers vanish;
+inline code becomes a padded pill; links keep their label behind an icon;
+entities render as their character; code blocks sit on a background band
+with the injected language's own colours intact and a language chip; block
+quotes get a per-depth border and callout types their accent; and every
+heading folds its subtree with a rendered fold line and an org-style cycle
+key.
+
+The text in the file never changes. Turn the plugin off and the buffer — and
+the window's fold and conceal options — are exactly as they were.
+
+markdown, typst (|lvim-render-typst-render|) and org (|lvim-render-org-render|)
+render today. The `asciidoc` and `latex` config blocks are the fixed surface
+their renderers will fill in later phases; |:checkhealth| reports each
+format's status.
+
+==============================================================================
+2. REQUIREMENTS                                     *lvim-render-requirements*
+
+- Neovim 0.11 or newer (decoration providers, treesitter range parsing)
+- lvim-utils (option merge and the shared colour palette)
+- the treesitter parser of each format you use — `markdown` (with
+  `markdown_inline`), `typst` and `org`. The org grammar is NOT in the
+  community parser catalogue: lvim-render registers it with lvim-pkg from its
+  own setup(), so installing this plugin is enough and no central
+  configuration is edited for it. When lvim-ts is installed the parser is
+  resolved and installed through it; any parser reachable on the runtimepath
+  works. A buffer whose parser is missing attaches INERT — no decorations, no
+  errors — and health names the missing grammar.
+
+==============================================================================
+3. INSTALLATION                                     *lvim-render-installation*
+
+Install with lvim-installer (the lvim-tech set's own installer), or with
+Neovim's native |vim.pack|: >lua
+
+    vim.pack.add({
+        "https://github.com/lvim-tech/lvim-utils",
+        "https://github.com/lvim-tech/lvim-render",
+    })
+
+    require("lvim-render").setup({})
+<
+==============================================================================
+4. CONFIGURATION                                   *lvim-render-configuration*
+
+`setup()` merges the given options into the live config in place; every part
+of the plugin reads the merged values. What is COMMON to every format lives
+at the top level; everything a FORMAT owns lives in its own block. The full
+default configuration, every option at its default, is printed in the
+README.md; the reference below explains the options by group.
+
+------------------------------------------------------------------------------
+4.1 COMMON OPTIONS                                 *lvim-render-config-common*
+
+`enabled`         (true) master switch — the global side of |:LvimRender|.
+`debounce`        (50) ms of idle after an edit before the fold outline is
+                  rebuilt. The decorations themselves need no debounce; they
+                  are recomputed per redraw from the latest tree.
+`max_file_size`   (2 MiB) and `max_lines` (20000): beyond either, the buffer
+                  attaches INERT with a one-shot notice — no parsing, no
+                  window options taken.
+`render.modes`    (every mode) modes in which decorations show at all,
+                  matched exactly or by first character ("n" covers "niI").
+                  The raw view is the REVEAL's job; remove "i" from this
+                  list to make insert mode entirely raw instead.
+`reveal.lines`    (0) extra lines around the cursor rendered raw, and
+                  `reveal.modes` ({ "i", "R" }) — the modes in which the
+                  reveal applies at all. See |lvim-render-reveal|.
+`conceal.level`   (2) and `conceal.cursor` ("nvc"): the 'conceallevel' and
+                  'concealcursor' asserted on windows showing an attached
+                  buffer. Window-local and user-owned, exactly like the fold
+                  options: recorded on attach, re-asserted at the
+                  buffer-reenter seam (where Neovim re-initialises
+                  window-local options and other machinery may write them),
+                  restored on detach; a fighting owner is named by health.
+                  "nvc" keeps conceal active at the cursor in normal, visual
+                  and command-line mode and releases it in insert — the same
+                  statement `reveal.modes` makes about the plugin's own
+                  decorations.
+`tables_insert_opens_editor`
+                  (true) entering insert inside a boxed table opens the table
+                  editor (|lvim-render-table-editor|). 'concealcursor' is
+                  "nvc", so Neovim un-conceals the CURSOR'S line in insert and
+                  that one row would surface under the box — editable and
+                  detached — while there is nothing to type into in place.
+`tables_box_reveal`
+                  (false) does a boxed table reveal on insert like every other
+                  element? It is not edited in the buffer, so revealing it only
+                  breaks the view.
+`tables_nav_keys` ({ down = "j", up = "k" }) buffer-local motions that step
+                  over a table separator row a box is hiding — inside a box
+                  that row draws nothing of its own. Either may be false.
+`tables_editor`   the editor's `title`, `width`, `height`, `border` (eight
+                  blank cells by default — no ring; any Neovim border value
+                  works) and its own buffer-local `keys`.
+`tables_hide_cursor`
+                  (true) hide the hardware cursor while it stands inside a
+                  table drawn as a box. Those rows are hidden by the box, so
+                  there is nothing on screen for the cursor to stand on; the
+                  box paints its own active row instead. Hidden through
+                  lvim-utils' cursor registry, never a hand-rolled
+                  'guicursor'.
+`priorities.band` (10) extmark priority of the heading band. It sits BELOW
+                  the syntax (50) and treesitter (100) layers so the band's
+                  background never washes out the heading's own colours.
+
+------------------------------------------------------------------------------
+4.2 FOLDING                                          *lvim-render-config-fold*
+
+`fold.enabled`    (true) own 'foldmethod', 'foldexpr' and 'foldtext' while
+                  attached. The window's previous values are recorded and
+                  restored on |:LvimRender| off or detach.
+`fold.headings`   (true) a heading folds everything under it, down to the
+                  next heading of the same or higher level.
+`fold.level`      (99) 'foldlevel' applied on attach. The default keeps the
+                  document OPEN — a renderer that collapses your file on
+                  load made a decision that was yours to make.
+`fold.text`       the rendered collapsed line: `enabled` (true), `title`
+                  ("{icon} {title}") drawn in the heading level's own band,
+                  `info` ("➤ {count} lines") drawn as a BOX in that level's
+                  accent blended harder, and `count_tint` (0.4) — how much
+                  harder. Placeholders: {icon}, {title}, {count}.
+                  The row is filled to the window's width, so 'fillchars'
+                  has nothing left to draw its fold character over — the
+                  option itself is yours and is never touched. While the
+                  cursor is ON the line the band rises to the box's tint, so
+                  the two become one solid tint of the level's accent.
+`tables.wrap_cells`
+                  (FALSE by default) under 'wrap', fit the box to the window:
+                  the columns shrink and every cell is split across as many
+                  lines as it needs, so the table never spills across
+                  continuation rows.
+                  OFF by default because of what it costs, measured rather
+                  than guessed. The box must be ONE block of virtual lines
+                  hanging off the row above the table — a range conceal hides
+                  a line's characters but NOT its screen rows, and virtual
+                  lines do not draw on a `conceal_lines` row. That block can
+                  only be drawn while the WHOLE table is on screen, so it pops
+                  in and out as you scroll past it; scrolling THROUGH it is
+                  one jump rather than line by line; and a table taller than
+                  the window gets nothing at all. For documents of small
+                  tables none of that bites. The row the cursor is on is
+                  painted with the editor's own CursorLine background while
+                  the box is up, since Neovim draws no 'cursorline' over
+                  virtual lines.
+
+`fold.separate_sections`
+                  (true) keep the blank row(s) immediately before a heading
+                  OUT of the fold above them. Such a row is a SEPARATOR, not
+                  content of the section it ends: folded away with that
+                  section it leaves the collapsed line and the next heading
+                  glued together with nothing between them. It takes the
+                  ENCLOSING subtree's level instead — 0 before a level-1
+                  heading, where it belongs to no fold at all — and each
+                  heading's hidden-line count is trimmed to match.
+`fold.keys`       `cycle` ("<Tab>") and `cycle_all` ("<S-Tab>"), buffer-local
+                  on attached buffers; either may be `false` to take no key.
+`fold.tables`     (false) opt-in: a table folds as one region, one level
+                  under its containing heading.
+
+------------------------------------------------------------------------------
+4.3 THE MARKDOWN FORMAT                          *lvim-render-config-markdown*
+
+`markdown.enabled`    (true) and `markdown.filetypes` ({ "markdown" }).
+`markdown.headings`   `enabled`, `band` (tinted full-width band),
+                      `conceal_markers` (hide the `#` run — its trailing
+                      space stays visible as the gap), `text` — "accent"
+                      (default) paints the TITLE TEXT with the level's own
+                      colour (the op sits above the treesitter layer), six
+                      visibly different headings whatever the theme's
+                      markup.heading groups do; "theme" leaves the text to
+                      the colorscheme — `setext_underline` ("─"; "" keeps
+                      the raw underline), and `levels` — six entries of
+                      { icon, pad }, H1 first. Any level can be wired to
+                      YOUR OWN highlight group verbatim:
+                      `highlights.h1 = { group = "MyH1" }` — used
+                      everywhere the level paints (band, icon, fold line).
+`markdown.lists`      `enabled` and `bullets` ({ "●", "○", "◆", "◇" }) — the
+                      glyph per nesting depth, cycled when deeper. The glyph
+                      sits on the marker character itself, wherever the
+                      grammar puts the node's edges.
+`markdown.rule`       `enabled`, `glyph` ("─") filled across the window's
+                      text width in place of a thematic break — any glyph
+                      or MULTI-CHAR pattern, cut to the exact cell: single
+                      "─", bold "━", double "═", dashed "┄" "╌", dotted
+                      "·", wavy "∿" "≈", patterns like "·─" — and `icon`
+                      ("◆") centred in the drawn line; "" leaves the line
+                      unbroken. Colours: `highlights.rule` (the line) and
+                      `highlights.rule_icon` (the icon), each its own
+                      accent.
+`markdown.emphasis`   (enabled) conceal the `*`/`_`/`~~` delimiters; the
+                      styling itself stays the treesitter groups' job.
+`markdown.inline_code`
+                      `pad` (" ") is what each backtick delimiter CONCEALS
+                      to — the pill's padding cells are the old backtick
+                      cells, no virtual text involved. One character or ""
+                      to hide the delimiters entirely. The pill background
+                      is `highlights.code_inline`, background-only.
+`markdown.links`      `icons.link` / `icons.image`, rendered verbatim before
+                      the label (keep the trailing space or drop it);
+                      `conceal` (true) hides the brackets and destination.
+`markdown.entities`   `&name;` renders as its character — the classic ~250
+                      HTML names ship as data; `extra` adds/overrides
+                      (name → ONE character; conceal cannot render more).
+`markdown.checkboxes` `states`: an ordered list of { char, icon }. The whole
+                      `[c]` token (and the list marker before it) conceals
+                      to the single icon, coloured by
+                      `highlights.checkboxes[index]`. Add your own states.
+`markdown.code`       `band` — a BACKGROUND-only band over the block; the
+                      injected language's own colours always win on top.
+                      `label` — the language chip (devicon through
+                      lvim-icons when present, `icon` as the fallback).
+                      `fences` — "show" (default) keeps the fence LINES
+                      visible: only the backticks conceal and the chip sits
+                      at the line start before the language name. Neovim's
+                      own markdown query hides those lines whole
+                      ('conceal_lines' — and the user-site copy conceals
+                      the language text too), so "show" installs an amended
+                      highlight query with just the fence-conceal
+                      directives stripped, via |vim.treesitter.query.set()|;
+                      health reports how many directives were stripped.
+                      "hide" keeps the native behaviour, with the chip
+                      right-aligned on the block's first content row.
+                      `position` — where the chip sits on the fence line:
+                      "left" (default; icon inline, the language text keeps
+                      its place), "center" or "right" (the language text
+                      conceals too and icon + name draw there). With
+                      fences = "hide" the chip is always right-aligned on
+                      the first content row. `icon_color` — "accent"
+                      (default; the chip icon in `highlights.code_icon`,
+                      one distinct colour) or "devicon" (the language's own
+                      lvim-icons colour, accent as fallback). The band
+                      (`highlights.code`) defaults to the palette's darker
+                      bg_dark surface.
+`markdown.quotes`     `border` ("▍") — what every `>` is redrawn as, per
+                      nesting depth accent, on continuation rows too.
+                      `repeat_on_wrap` (false) repeats the border on WRAPPED
+                      rows; it paints over each continuation row's first
+                      cell unless 'breakindent'/'showbreak' keep that column
+                      free (measured) — pair it with `breakindent` +
+                      `breakindentopt=shift:2`.
+`markdown.escapes`    (enabled) `\*` shows `*` — the backslash conceals.
+`markdown.mark`       (enabled) `==text==` becomes a highlighter-pen span
+                      (`highlights.mark`); the markers conceal. Protected
+                      inside code and math spans.
+`markdown.emoji`      (enabled) `:smile:` renders the emoji — the classic
+                      single-codepoint gemoji names ship as data; `extra`
+                      adds/overrides (name → ONE character). The user's own
+                      emoji in their own prose — deliberately not a Nerd
+                      glyph.
+`markdown.tags`       (disabled) opt-in `#tag` accenting (whitespace-
+                      preceded, non-numeric). Off because the token
+                      collides with plain prose too easily.
+`markdown.refdefs`    (enabled) `[id]: url` lines carry `icon`; the text
+                      stays readable.
+`markdown.frontmatter` (enabled) `---` YAML / `+++` TOML blocks sit on a
+                      background-only band (`highlights.metadata`); the
+                      injected yaml colours ride on top.
+`markdown.html`       (enabled) basic tags — <b>/<strong>, <i>/<em>, <u>,
+                      <s>/<del>/<strike>, <mark> — conceal, and the span
+                      between takes the pure-attribute group. An unpaired
+                      or non-basic tag stays raw.
+`links.icons`         also carries `auto` (`<https://…>` autolinks),
+                      `wiki` (`[[wikilink]]` / `[[target|alias]]` — the
+                      target and pipe conceal, the alias stays) and `embed`
+                      (`![[file]]`).
+
+`math` (COMMON, not per-format): `$…$` and `$$…$$` substitute through the
+SHARED symbol table — lvim-tex's own conceal data, one map across the set;
+`math.inline.maps` / `math.block.maps` merge over it, and without lvim-tex
+the substitution is inert (health says so). Block math gets a background-
+only band (`highlights.math`) and a right-aligned `label`. THE CEILING,
+stated: substitution is linear and per token — `\alpha^2` reads `α²`, and
+`\sum` substitutes even in a complex equation, but `\frac{a}{b}`,
+matrices and multi-character scripts CANNOT be one character and stay raw
+text inside the band — readable and honest, never mangled.
+
+`markdown.tables`     the full box. Columns size to the widest RENDERED
+                      cell — the inline layer has already concealed link
+                      syntax, turned backticks into padding and inserted
+                      icons by the time the box is measured, so a cell's
+                      display width has nothing to do with its bytes; `≥`,
+                      Cyrillic and CJK measure as display cells. A manually
+                      space-padded source table reflows to content-sized
+                      columns (the source padding conceals). Alignment
+                      comes from the delimiter row (`:---`, `:---:`,
+                      `---:`). `box` draws the top/bottom border lines,
+                      `head` bands the header row, `borders` names every
+                      glyph. THE RULE: the box is all-or-nothing per table —
+                      beyond `max_rows`, `max_width`, or the window's text
+                      width, the WHOLE table degrades to styled pipes and a
+                      drawn delimiter aligned to the text as written; a
+                      silently broken box is never an outcome. The analysis
+                      is cached per edit; scrolling costs a screen, not the
+                      table. Editing inside a table reveals it WHOLE.
+                      Limitation: a table on the FIRST line of the file has
+                      no room for its top border (Neovim draws no virtual
+                      lines above the window's top line); the rest of the
+                      box draws. Aligning the RAW source's pipes is editing,
+                      not decoration — that is lvim-table's table mode;
+                      lvim-render boxes whatever the source says.
+`markdown.callouts`   `types`: { key, icon, label } entries, matched
+                      case-insensitively against `> [!KEY]`. The quote's
+                      borders take the type's accent
+                      (`highlights.callouts[key]`), and the token renders as
+                      icon + label. Extendable — add a type and its
+                      highlight entry.
+
+------------------------------------------------------------------------------
+4.4 THE OTHER FORMATS                             *lvim-render-config-formats*
+
+                                                          *lvim-render-typst*
+`typst` is a REAL renderer, not a future surface — see |lvim-render-typst|
+for what it draws. Its block carries the elements typst actually has, and
+only those: it has NO `rule` block, because typst has no thematic break, and
+a configuration key that draws nothing would be a lie. What it adds instead:
+
+    lists.enum   `{ enabled, format }` — `+` is typst's auto-numbered marker,
+                 so it renders as its ordinal (`{n}` is the position in the
+                 run) rather than as a bullet
+    terms        `{ enabled, icon, bold }` — `/ Term: description`
+    labels       `{ enabled, icon, conceal }` — `<name>`
+    refs         `{ enabled, icon }` — `@name`
+
+                                                            *lvim-render-org*
+`org` is a REAL renderer too — see |lvim-render-org-render|. Like typst it has
+NO `rule` block: `-----` is plain text in this grammar, with no node to hang a
+drawn line on. It carries `checkboxes`, `quotes`, `code`, `links`,
+`inline_code`, `emphasis` and `frontmatter` (the drawers and `#+…:` directives)
+alongside the common heading and list blocks.
+
+                                                       *lvim-render-asciidoc*
+`asciidoc` carries the same block shape as `markdown` (enabled, filetypes,
+headings, lists, rule). Its renderer lands in a later phase — until then its
+buffers do not attach, and health reports exactly that. It additionally waits
+on its grammar becoming reachable: unlike org's, no upstream tree-sitter
+grammar for it is packaged in a form the registry seam can point at yet.
+
+`latex` is OFF by default: standalone .tex buffers belong to lvim-tex, and
+enabling both is a double-decoration risk the user must opt into knowingly.
+
+`math` is common rather than a format — math appears inside markdown, typst
+and org alike (each with its own delimiters). Its `inline`/`block` unicode substitution lands at
+its phase; `math.image` is the experimental kitty tier (off by default; the
+only part of the plugin that would spawn processes).
+
+------------------------------------------------------------------------------
+4.5 COLOURS                                       *lvim-render-config-colours*
+
+Every entry of `highlights` names a palette colour of lvim-utils (`accent`),
+an optional `tint` (blend factor of the cell behind the text), `bg = false`
+for a foreground-only glyph, and `bold`. Hex literals are never used; the
+groups are re-derived from the live palette on every colorscheme change.
+
+------------------------------------------------------------------------------
+4.6 PREVIEW AND COMPLETION                        *lvim-render-config-preview*
+
+`split` configures the side-by-side preview (|lvim-render-split|): >lua
+    split = {
+        position = "right",   -- or "left"
+        width = 0,            -- fraction (<= 1) or cells; 0 leaves it to :vsplit
+        source = "raw",       -- or "rendered" — what the SOURCE window shows
+        winbar = "%#LvimRenderCodeLabel# %t",  -- the preview's own winbar
+        quiet_source = true,  -- codelens off in the raw source while open
+        focus = "source",     -- or "preview" — where the cursor lands
+        sync_scroll = true,   -- keep the preview's TOP line on the source's
+        debounce = 120,       -- ms of idle before the mirror is re-copied
+        win_options = {
+            number = false,
+            relativenumber = false,
+            signcolumn = "no",
+            cursorline = false,
+        },
+    }
+<
+`completion` configures the lvim-cmp source (|lvim-render-completion|): >lua
+    completion = { enabled = true, priority = 40 }
+<
+Both are inert without their counterpart: nothing opens a preview until
+|:LvimRender| split is used, and the completion source is never registered
+when lvim-cmp is not installed.
+
+==============================================================================
+5. COMMANDS                                             *lvim-render-commands*
+
+                                                                *:LvimRender*
+:LvimRender [action] [all]
+
+    action: `toggle` (default), `on`, `off` — applied to the current buffer.
+    With `all`, the action applies to every attached buffer and flips the
+    master switch with it.
+
+    `off` restores the window's previous 'foldmethod', 'foldexpr',
+    'foldtext', 'foldenable', 'foldlevel', 'conceallevel' and
+    'concealcursor', and removes every mark the plugin made.
+
+:LvimRender split [action]
+
+    action: `toggle` (default), `open`, `close`, `redraw` — the side-by-side
+    preview of the current buffer (|lvim-render-split|). `redraw` copies the
+    source into the preview at once, without waiting out `split.debounce`.
+
+:LvimRender table
+
+    Open the full-screen editor for the table under the cursor
+    (|lvim-render-table-editor|). markdown and org; typst has no table node.
+
+==============================================================================
+6. KEYS                                                     *lvim-render-keys*
+
+Buffer-local, on attached buffers only, both configurable via `fold.keys`
+(set either to `false` to take no key):
+
+    <Tab>    cycle the heading under the cursor:
+             collapsed → children shown → whole subtree → collapsed
+    <S-Tab>  cycle the whole document:
+             overview (level 0) → children (level 1) → everything
+
+Note: in terminals without the extended keyboard protocol <Tab> and <C-i>
+are the same key, so the jump-forward motion is shadowed in attached
+buffers there.
+
+==============================================================================
+7. THE REVEAL                                             *lvim-render-reveal*
+
+Raw ONLY in insert. In normal, visual and command-line mode the document
+stays fully rendered, the cursor's own line included. Entering insert (or
+replace) reveals the element under the cursor — the literal text, no band,
+no conceal, no icon — so the columns you edit are the file's own; leaving
+insert re-renders it. `reveal.lines` widens the raw span; a multi-row
+element (a setext heading, a table, a fenced block, a quote, a callout)
+touching the span reveals WHOLE — a half-decorated element is unreadable.
+`reveal.quotes = "row"` softens that for block quotes only: just the edited
+row's border is stripped (the quieter choice for very long quotes).
+
+THE COST, stated honestly: a cursor move that changes reveal membership
+issues at most TWO range redraw requests (the old raw span and the new,
+each padded by the walk's slack); each such redraw re-collects the VISIBLE
+WINDOW — O(window), about 2 ms at 100 columns, never O(document). A move in
+a mode that reveals nothing (normal-mode travel) issues zero requests.
+Measured by instrumented fixture, not asserted from the plan.
+
+Two mechanisms carry this rule, and they must AGREE per mode:
+
+- 'concealcursor' ("nvc") governs the CONCEAL marks at the cursor — native,
+  per mode letter.
+- `reveal.modes` ({ "i", "R" }) governs the plugin's own decorations.
+
+A configuration where they disagree draws a HALF-rendered cursor line
+(concealed text raw while glyphs stay, or the reverse); |:checkhealth|
+warns about exactly that combination, per mode.
+
+Known residual: inline icon marks are buffer-global, so when the same
+buffer is visible in a second window, that window's redraw re-adds the
+edited heading's icon. A window-scoped namespace is the recorded
+enhancement if this ever matters in practice.
+
+==============================================================================
+8. FOLDING                                               *lvim-render-folding*
+
+The plugin supplies the folds itself: 'foldmethod' is set to "expr" with an
+expression that looks up a cached OUTLINE of the document — every heading's
+row, level, title and subtree extent — rebuilt on the edit debounce and
+refreshed in place. `zM`, `zR`, `zm`, `zr`, 'foldlevel' and every other
+fold command behave exactly as an outline reader expects; heading depth is
+fold level.
+
+The collapsed line stays rendered: the level's icon and pad, the heading
+title, and the hidden-line count, coloured by the level's own group. This is
+what 'foldtext' is for, and it is the reason folding belongs to this plugin
+rather than to a generic foldexpr.
+
+The fold expressions run behind an ERROR BOUNDARY: an error inside a
+'foldtext' expression is otherwise drawn as an EMPTY fold line with no
+message at all (under a `fold:─` fillchar it looks exactly like a rendered
+rule — a live incident). If the plugin's foldtext or foldexpr ever raises,
+the builtin fold line is drawn instead and |:checkhealth| names the error
+and how often it fired.
+
+The global cycle is expressed through 'foldlevel' (0 → 1 → everything). A
+true "all headings, no bodies" view cannot be expressed by expr folds — a
+body shares its heading's fold — so the middle state shows level-1 sections
+with their content; stated here rather than pretended otherwise.
+
+Ownership: the previous window fold options are recorded on attach and
+restored on |:LvimRender| off or detach. A window created by SPLITTING an
+owned window is born carrying the plugin's options, so it is restored to the
+buffer's baseline (what the first window had before attach). When the
+previous 'foldexpr' belonged to someone else, health names it.
+
+==============================================================================
+9. API                                                       *lvim-render-api*
+
+setup({opts})                                             *lvim-render.setup()*
+    Merge {opts} into the live config and start. Idempotent; a repeat call
+    re-applies formats and colours and sweeps already-open buffers.
+
+status({buf})                                            *lvim-render.status()*
+    → { attached, enabled, inert, format, mirror, split } for {buf}
+    (default: current). `inert` is a human-readable reason (size gate,
+    missing grammar) or nil; `mirror` says whether {buf} IS a preview, and
+    `split` whether one is open for it.
+
+refresh({buf})                                          *lvim-render.refresh()*
+    Rebuild the fold outline of {buf} now, bypassing the debounce, and
+    re-evaluate its folds.
+
+split({action}, {buf})                                    *lvim-render.split()*
+    "toggle" (default) | "open" | "close" | "redraw" the preview of {buf}.
+    → whether a preview is open after the call (for "redraw": whether one
+    was there to refresh).
+
+==============================================================================
+10. THE SIDE-BY-SIDE PREVIEW                              *lvim-render-split*
+
+`:LvimRender split` opens a second window showing the same document fully
+rendered, while the window you edit in keeps revealing the raw markers under
+your cursor (|lvim-render-reveal|).
+
+THE SOURCE IS ALSO QUIETED (`split.quiet_source`): LSP codelens is turned off
+for that buffer while the preview is open and restored on close. Its virtual
+lines ("1 reference" above a heading) are not the file's own text, and each one
+pushes the source down a row. Only ever turned off when it was on.
+
+BOTH SIDES START AT THE SAME HEIGHT. The preview draws its own 'winbar'
+(`split.winbar`) whenever the source window has one — chrome above the text
+decides where the text starts, and a winbar on the source alone leaves the two
+documents one row apart. Its OWN, not a copy: the plugin that owns that value
+excludes scratch buffers and clears its own string back off the window, so a
+copy would not survive; a different string is a foreign winbar, which such a
+plugin leaves alone.
+
+THE SOURCE GOES RAW while the preview is open (`split.source`, the default):
+every marker, fence and pipe exactly as written on one side, what it becomes
+on the other. Rendering both sides makes the preview a clone that shows
+nothing the source does not.
+
+"Raw" means 'conceallevel' 0 for as long as the preview lives — not the value
+you happen to have set. Neovim's own markdown queries conceal `**` and `[]` at
+level 2, so restoring your setting would leave the raw side still hiding
+markers. The plugin keeps OWNING the option, re-asserting it at the
+buffer-reenter seam like every other window option it owns, and hands it back
+when the preview closes. `split.source = "rendered"` keeps both sides
+decorated.
+
+WHY IT IS A COPY. The preview is a MIRROR BUFFER, not the same buffer in a
+second window, and that follows from how Neovim draws rather than from
+preference. Inline virtual text and virtual lines render nothing when they
+are ephemeral, so every icon, code chip and table border here has to be a
+real buffer extmark — and a buffer extmark shows in EVERY window displaying
+that buffer. There is no window-scoped extmark namespace to put it in
+(`nvim_win_add_ns` exists in neither 0.12 nor 0.13). One buffer therefore
+cannot be raw on one side and rendered on the other; two buffers can.
+
+The mirror is unlisted, unmodifiable and 'buftype' "nofile". It is
+overwritten wholesale from the source and never read back, so no edit can be
+lost in it — and it never reveals, whether or not it holds the cursor,
+because a reveal would put raw markers in the one window whose job is to
+show none.
+
+It follows the source's edits, coalesced by `split.debounce` and flushed
+immediately on |InsertLeave|, and the source's top line when
+`split.sync_scroll` is set. Only the top line: a rendered table is taller
+than its source rows, so matching cursor lines would fight that difference.
+
+Closing either window — or deleting the source buffer — takes the whole
+thing down: window, mirror buffer, timer and autocommand group.
+
+==============================================================================
+10a THE TABLE EDITOR                          *lvim-render-table-editor*
+
+`:LvimRender table` opens the table under the cursor in a full-screen editor.
+
+WHY IT EXISTS. A table cannot be edited comfortably in the buffer under 'wrap':
+concealed text still takes its width when a line wraps, so a row with links —
+two to three times longer raw than rendered — wraps by its RAW length and the
+columns come apart. A decoration cannot shorten a line. The in-buffer answer is
+the fitted box (|lvim-render-config-common|, `tables.wrap_cells`), and the box
+hides the very rows you would edit. This is the other half.
+
+The editor is a window of its own: its own width, its own 'nowrap'. Nothing
+there fights your settings. Entering insert inside a boxed table opens it too
+(`tables_insert_opens_editor`) — otherwise 'concealcursor' un-conceals that one
+row underneath the box, editable and detached from its table.
+
+    <CR>              write the table back, reformatted, and close
+    q / <Esc>         cancel
+    <Tab> / <S-Tab>   next / previous cell
+    <C-r> / <C-d>     add / delete a row
+    <C-c> / <C-x>     add / delete a column
+    <C-a>             re-align after an edit widened a cell
+
+All of them are `tables_editor.keys`. The key that OPENS the editor is
+deliberately not taken: that one belongs in your own keymap.
+
+WRITE-BACK REFORMATS. The grid you edit is aligned, so writing back something
+ragged would make the file disagree with what you just saw. Columns are padded
+to their widest cell; markdown's delimiter row keeps the alignment the source
+declared; org gets its own `+` separator; nothing outside the table's rows is
+touched. The formatting is IDEMPOTENT — a formatter that reformats its own
+output differently corrupts a file a little more on every visit.
+
+==============================================================================
+11. COMPLETION                                       *lvim-render-completion*
+
+When lvim-cmp is installed, this plugin registers a completion source for
+the two vocabularies it OWNS and nothing else can know:
+
+    > [!         every configured callout type; accepting closes the bracket
+    - [ / 1. [   every configured checkbox state
+
+Both lists are generated from the LIVE config on each request, so a type
+added to `callouts.types` is offered without anything else being told about
+it. The position is decided from the text to the LEFT of the cursor, not
+from treesitter: a half-typed `> [!` is not yet a callout node, and a source
+that waits for the grammar to agree completes nothing while you are still
+typing the thing.
+
+lvim-cmp is a sibling, not a dependency. Where it is absent the source is
+never registered, silently; `completion.enabled = false` switches it off
+where it is present.
+
+==============================================================================
+12. TYPST                                          *lvim-render-typst-render*
+
+Typst renders through the SAME pipeline as markdown, over typst's own
+grammar — it is not markdown with different node names, and nothing is
+assumed to carry over. Two structural differences drive everything below.
+
+ONE TREE. Typst has no injected inline layer: block and inline elements come
+out of a single grammar and a single query. Where markdown resolves an
+injected `markdown_inline` child before it can decorate a code span, typst
+simply captures it.
+
+TYPST NAMES ITS PARTS DIFFERENTLY. The heading level is the LENGTH of the `=`
+run, not a node type spelling it out (`atx_h2_marker`); the `+` and `-` list
+markers share one node type and are told apart by their text; list nesting is
+`item` inside `item`, with no list wrapper to count.
+
+What it draws:
+
+    = / == / ===       heading, level = length of the run; icon, band, the
+                       marker concealed — exactly markdown's heading
+    - item             a bullet per nesting depth
+    + item             its ORDINAL (`lists.enum.format`, `{n}`). `+` is
+                       typst's auto-numbered marker: rendering it as a dot
+                       would say it is the same kind of list as `-`. The
+                       ordinal is inserted INLINE over a concealed marker,
+                       so the row shifts by the ordinal's real width
+    / Term: text       the marker becomes a glyph, the term takes
+                       LvimRenderTerm
+    *strong* _emph_    the delimiters conceal; the styling stays treesitter's
+    `raw`              a padded pill, the backticks concealed to the padding
+    ```lang … ```      a background band + a language chip
+    https://…          a bare url gets the link icon. There is nothing to
+                       conceal — unlike markdown's `<…>` autolink, typst
+                       writes the url plain
+    <name>             a label: the brackets conceal behind a tag icon, the
+                       name stays readable
+    @name              a reference: the `@` itself becomes the icon
+    \#                 the backslash conceals, the character shows plain
+    $ … $ / $…$        math — see below
+
+MATH: TYPST'S OWN RULE decides display versus inline. `$ x $` — with spaces
+inside the dollars — is a display block and gets the band and label; `$x$` is
+inline. A multi-row span is display either way. There is no second delimiter
+to look for, the way markdown's `$$` is.
+
+The SYMBOLS substitute through the same shared table as markdown's LaTeX
+math: typst writes `alpha` where LaTeX writes `\alpha`, so one table serves
+both formats and nothing is duplicated. Scripts come off the `attach` node
+(`x^2` → x²) rather than from a text scan. The single-character ceiling of
+|lvim-render-config-common| holds unchanged: what has no one-character
+rendering stays raw.
+
+Headings fold exactly as markdown's do (|lvim-render-folding|). Typst has no
+table node of its own — a typst table is a `#table(…)` call, which is code —
+so `fold.tables` has nothing to act on there.
+
+==============================================================================
+13. ORG                                              *lvim-render-org-render*
+
+Org renders through the same pipeline, over org's own grammar. One structural
+fact drives everything: ORG HAS NO NODES FOR ITS INLINE MARKUP.
+
+`*bold*` is a `str` between two bare `*` tokens inside an `expr`; `*two
+words*` splits across two exprs with one token in each; and a lone `*` in
+`2 * 3` is the SAME token type. Concealing every marker token would delete
+real asterisks out of prose. So markers are PAIRED across the whole paragraph
+— a start token matched to an end token, the rule the grammar's own
+markup.scm encodes — and only a token that finds its partner is concealed.
+
+Pairing alone is not enough either: the two slashes of `~/.config/nvim/.snap`
+pair perfectly, and concealing them renders the path as `~.confignvim.snap` —
+a lie about the file's contents. Org does not call those emphasis, because of
+`org-emphasis-regexp-components`: a marker OPENS only at a word boundary
+(start of line or after whitespace or an opening bracket, and immediately
+before a non-space) and CLOSES only at one (immediately after a non-space, and
+before end of line, whitespace or closing punctuation). Both rules are
+applied, which is what makes a slash in a path different from the `/` in
+`/italic/`. An unmatched marker is left exactly as written.
+
+What it draws:
+
+    * / ** / ***       headline, level = the number of stars; icon, band, the
+                       star run concealed
+    - item             a bullet per nesting depth
+    1. item            left as written: org already prints the number, and a
+                       one-cell glyph over a two-cell marker left the `.`
+                       behind
+    [ ] / [X]          the configured state glyph (a node of its own here,
+                       unlike markdown's bare token run)
+    *b* /i/ _u_ +s+    the delimiters conceal, paired as above
+    =verbatim= ~code~  org's two inline-code spellings, both as padded pills
+    #+begin_src …      a background band + a language chip, and the code
+                       inside SYNTAX-HIGHLIGHTED: the org grammar ships no
+                       injections query, so this plugin ships one. BOTH halves
+                       of the marker conceal — `#+begin_` and the block kind
+                       are marker text alike
+    #+begin_quote …    a border on the CONTENT rows; the marker rows conceal,
+                       since there is no language to keep on them. Same node
+                       type as the src block: the KIND is read, not assumed
+    [[target][label]]  the target and brackets conceal behind an icon, the
+                       label stays
+    [[target]]         only the brackets conceal — the target IS the text
+    :PROPERTIES: …     drawers and `#+…:` directives on the metadata band
+
+Headlines fold exactly as markdown's headings do (|lvim-render-folding|), and
+`fold.tables` works here too: org's table IS a node.
+
+NOT YET DRAWN, deliberately: `-----` (no node to anchor on), TODO/DONE keyword
+accenting, tags and timestamps, and the full table box (org's table nodes are
+shaped differently from markdown's `pipe_table` and would need their own
+measuring pass). They are recorded as open items rather than half-implemented.
+
+==============================================================================
+14. HIGHLIGHT GROUPS                                  *lvim-render-highlights*
+
+    LvimRenderH1 .. LvimRenderH6      heading band + icon per level
+    LvimRenderBullet1 .. BulletN      one per configured bullet depth
+    LvimRenderRule                    the drawn rule line
+    LvimRenderRuleIcon                the icon centred in it
+    LvimRenderFoldStrong1 .. 6        the count box on a collapsed line — the
+                                      level's accent blended harder — and that
+                                      whole line while the cursor is on it
+    LvimRenderFoldInfo                kept for a user mapping; the built line
+                                      uses the per-level groups above
+    LvimRenderTerm                    a typst term (`/ Term: …`) and its glyph
+    LvimRenderCode                    the code-block band (background-only)
+    LvimRenderCodeLabel               the language chip's name part
+    LvimRenderCodeIcon                the chip icon (icon_color = "accent")
+    LvimRenderCodeInline              the inline-code pill (background-only)
+    LvimRenderLink                    link/image icons
+    LvimRenderQuote1 .. QuoteN        quote borders per nesting depth
+    LvimRenderCheckbox1 .. CheckboxN  one per configured checkbox state
+    LvimRenderTableBorder             the table box glyphs
+    LvimRenderTableHead               the header row band
+    LvimRenderMath                    the block-math band (background-only)
+    LvimRenderMathLabel               the block-math label
+    LvimRenderMathSymbol              substituted math glyphs
+    LvimRenderMark                    ==marked== spans (and <mark>)
+    LvimRenderTag                     opt-in #tags
+    LvimRenderMetadata                the frontmatter band (background-only)
+    LvimRenderHtmlBold/Italic/…       the basic-HTML attribute groups
+    LvimRenderCallout<Key>            one per configured callout type
+
+All are built from the shared lvim-utils palette through a bound factory and
+re-derived on every colorscheme change; the accents and tints come from the
+`highlights` config.
+
+==============================================================================
+15. HOW IT WORKS                                       *lvim-render-internals*
+
+One pipeline: treesitter parse → node walk → decoration ops → extmarks,
+windowed to what is on screen.
+
+- A single decoration provider computes, per window and per redraw, the
+  decoration ops for exactly the visible rows (±2 rows of slack), and emits
+  the cheap ones as EPHEMERAL marks — recomputed each redraw, zero cleanup,
+  nothing persistent accumulating. A 10k-line document costs what one screen
+  costs (measured ~2 ms a screen).
+- Inline icons cannot be ephemeral: inline virtual text right-shifts the
+  buffer text, which a redraw must know before drawing. They live in a small
+  PERSISTENT lane, reconciled per visible row against the marks actually in
+  the buffer — the marks themselves are the state, so edits can never
+  desynchronise a shadow copy.
+- The heading band is an ephemeral RANGE highlight with `hl_eol`, at a
+  priority below the syntax and treesitter layers, so the band's background
+  survives under the heading's own foreground colours.
+- Edits mark a dirty span and bump a GENERATION; the outline rebuild runs
+  after `debounce` ms of quiet and aborts if the buffer has moved on. Folds
+  are then re-evaluated in place for the changed rows only.
+- Cursor travel redraws only the lines whose reveal membership changed —
+  two small redraw requests, no re-parse, no mark churn.
+
+==============================================================================
+16. HEALTH                                                *lvim-render-health*
+
+`:checkhealth lvim-render` reports:
+
+- the environment: Neovim version, lvim-utils, lvim-ts, the fold-refresh
+  seam;
+- each format's status: active with its grammar, disabled, waiting on a
+  later phase, or missing its parser (with the install hint);
+- every attached buffer: rendering / off / INERT with the reason, and the
+  size of its fold outline;
+- window ownership: a previous 'foldexpr' owner named by value, and the
+  LIVE conceal options against what the plugin asserts — a mismatch means
+  another autocmd is overwriting them after the plugin's re-assert, and the
+  report says so (with the pre-attach values that `off` would restore);
+- any error a fold expression raised (the builtin fold line was drawn in
+  its place — never an empty one);
+- every open preview: its window, and whether the mirror's line count is in
+  step with its source (a permanent difference means its sync autocommands
+  were cleared from outside);
+- the completion source: registered with lvim-cmp and with how many callout
+  types and checkbox states, or simply absent — lvim-cmp missing is INFO,
+  never a warning;
+- the 'concealcursor' ↔ `reveal.modes` agreement, per mode — a disagreeing
+  pair draws a half-rendered cursor line and is warned about by name;
+- the configuration: gates, templates and their placeholders, every glyph's
+  cell width, and every highlight accent against the live palette.
+
+vim:tw=78:ts=8:noet:ft=help:norl:
