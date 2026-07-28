@@ -259,6 +259,56 @@ local function on_bytes(buf, start_row, old_end, new_end)
     end
 end
 
+--- Hide the hardware cursor while it stands inside a table drawn as a BOX: those rows are hidden,
+--- so the cursor has nothing to stand on there, and the box paints the active row itself. Through
+--- lvim-utils' own cursor registry — never a hand-rolled 'guicursor' save/restore.
+---@param buf integer
+---@return nil
+local function sync_box_cursor(buf)
+    if not config.tables_hide_cursor then
+        return
+    end
+    local st = state.get(buf)
+    local inside = false
+    if st ~= nil and st.boxed ~= nil then
+        local row = api.nvim_win_get_cursor(0)[1] - 1
+        for first, last in pairs(st.boxed) do
+            if row >= first and row <= last then
+                inside = true
+                break
+            end
+        end
+        -- A WALK COUNTS AS BEING INSIDE. The widget parks the real cursor on the displayed row
+        -- ABOVE the table — outside every boxed span — so the span test alone would leave a
+        -- hardware cursor blinking on the anchor while the box paints the row you are actually on.
+        if st.box_active ~= nil and row == st.box_active.anchor then
+            inside = true
+        end
+    end
+    local ok, cursor = pcall(require, "lvim-utils.cursor")
+    if ok and type(cursor.mark_hide_buffer) == "function" then
+        cursor.mark_hide_buffer(buf, inside or nil)
+    end
+end
+
+--- End a widget walk: give 'scrolloff' back to the window and drop the active row. Every exit
+--- goes through here — stepping off either end, moving the cursor away, opening the editor — so
+--- the borrowed option can never outlive the walk that borrowed it.
+---@param win integer
+---@param st LvimRenderBufState|nil
+---@return nil
+local function release_box(win, st)
+    local act = st ~= nil and st.box_active or nil
+    if act == nil then
+        return
+    end
+    if act.scrolloff ~= nil and api.nvim_win_is_valid(win) then
+        vim.wo[win].scrolloff = act.scrolloff
+    end
+    ---@cast st LvimRenderBufState
+    st.box_active = nil
+end
+
 --- Attach a buffer: resolve its format and grammar, gate on size, build the first outline, own
 --- the windows, take the fold keys.
 ---@param buf integer
@@ -381,14 +431,16 @@ function M.attach(buf)
                         local next_index = act.index + delta
                         if next_index >= 1 and next_index <= act.rows then
                             act.index = next_index
+                            act.avail = api.nvim_win_get_height(0) - 1
                             redraw(buf)
                             api.nvim_win_set_cursor(0, { act.anchor + 1, 0 })
                             return
                         end
-                        st.box_active = nil
+                        release_box(api.nvim_get_current_win(), st)
                         local total = api.nvim_buf_line_count(buf)
                         local out = delta < 0 and act.anchor or (act.last + 2)
                         api.nvim_win_set_cursor(0, { math.max(1, math.min(out, total)), 0 })
+                        sync_box_cursor(buf)
                         redraw(buf)
                         return
                     end
@@ -403,6 +455,23 @@ function M.attach(buf)
                             index = delta > 0 and 1 or rows,
                         }
                         api.nvim_win_set_cursor(0, { math.max(1, span.first), 0 })
+                        -- The box hangs BELOW the parked row, so how much of it can be seen is
+                        -- whatever is left under that row. Putting it at the top gives the block
+                        -- the whole window to page through — otherwise entering a table near the
+                        -- bottom shows three of its rows and pages inside those three.
+                        -- THE PARKED ROW GOES TO THE TOP, so the box's room is known rather than
+                        -- measured from wherever the view happened to be. `zt` alone cannot do it —
+                        -- 'scrolloff' keeps its distance and the row stays put (measured) — so the
+                        -- option is OWNED for the length of the walk and put back on the way out,
+                        -- the same bargain this plugin makes with every window option it needs.
+                        st.box_active.scrolloff = vim.wo[0].scrolloff
+                        vim.wo[0].scrolloff = 0
+                        pcall(vim.cmd, "normal! zt")
+                        st.box_active.avail = api.nvim_win_get_height(0) - 1
+                        -- Entering does not always MOVE the cursor: press `j` on the row the
+                        -- widget parks on and it stays put, so CursorMoved never fires and the
+                        -- hardware cursor would blink on the anchor. Asked for directly.
+                        sync_box_cursor(buf)
                         redraw(buf)
                     end
                     return
@@ -566,32 +635,6 @@ end
 --- The cursor moved: redraw only the lines whose reveal membership changed — the span that WAS
 --- raw and the line that now is. O(1) per move, no re-parse, no mark churn.
 ---@return nil
---- Hide the hardware cursor while it stands inside a table drawn as a BOX: those rows are hidden,
---- so the cursor has nothing to stand on there, and the box paints the active row itself. Through
---- lvim-utils' own cursor registry — never a hand-rolled 'guicursor' save/restore.
----@param buf integer
----@return nil
-local function sync_box_cursor(buf)
-    if not config.tables_hide_cursor then
-        return
-    end
-    local st = state.get(buf)
-    local inside = false
-    if st ~= nil and st.boxed ~= nil then
-        local row = api.nvim_win_get_cursor(0)[1] - 1
-        for first, last in pairs(st.boxed) do
-            if row >= first and row <= last then
-                inside = true
-                break
-            end
-        end
-    end
-    local ok, cursor = pcall(require, "lvim-utils.cursor")
-    if ok and type(cursor.mark_hide_buffer) == "function" then
-        cursor.mark_hide_buffer(buf, inside or nil)
-    end
-end
-
 function M.on_cursor_moved()
     local win = api.nvim_get_current_win()
     local buf = api.nvim_win_get_buf(win)
@@ -602,7 +645,7 @@ function M.on_cursor_moved()
     if st ~= nil and st.box_active ~= nil then
         local row = api.nvim_win_get_cursor(win)[1] - 1
         if row ~= st.box_active.anchor and not (row >= st.box_active.first and row <= st.box_active.last) then
-            st.box_active = nil
+            release_box(win, st)
             redraw(buf)
         end
     end
@@ -662,9 +705,13 @@ function M.on_mode_changed(from, to)
         -- While the widget is walking a table the cursor sits on the row ABOVE it, so that row
         -- counts as being "in" the table for this purpose — it is where `i` is pressed.
         if st ~= nil and st.box_active ~= nil and row == st.box_active.anchor then
+            local first = st.box_active.first
             vim.schedule(function()
                 vim.cmd("stopinsert")
-                api.nvim_win_set_cursor(0, { st.box_active.first + 1, 0 })
+                -- The walk ends here: the editor is the cursor's next home, and the option the
+                -- widget borrowed must not follow it there.
+                release_box(api.nvim_get_current_win(), st)
+                api.nvim_win_set_cursor(0, { first + 1, 0 })
                 require("lvim-render.table_editor").open(buf)
             end)
             return

@@ -382,7 +382,7 @@ local function show_help()
         end
     end
     row("commit", "write the table back — reformatted — and close")
-    items[#items + 1] = { "q / <Esc>", "close without writing anything back" }
+    row("cancel", "close without writing anything back")
     row("next_cell", "move to the next cell (wraps to the next row)")
     row("prev_cell", "move to the previous cell")
     row("row_add", "add a row below this one")
@@ -406,8 +406,9 @@ end
 
 --- Wire the editor's own keys onto its buffer.
 ---@param ed integer
+---@param handle table|nil  the surface's state, for the key that closes it
 ---@return nil
-local function set_keys(ed)
+local function set_keys(ed, handle)
     local keys = config.tables_editor.keys
     ---@param lhs string|false
     ---@param fn_ fun()
@@ -443,6 +444,13 @@ local function set_keys(ed)
         realign(ed)
     end, { "n" })
     map(keys.help, show_help, { "n" })
+    -- NORMAL MODE ONLY, and never <Esc>: this buffer is typed into, and a key that closes the
+    -- window would take the reader's way out of insert with it.
+    map(keys.cancel, function()
+        if handle ~= nil and type(handle.close) == "function" then
+            handle.close()
+        end
+    end, { "n" })
 end
 
 --- Open the editor for the table under the cursor.
@@ -531,7 +539,7 @@ function M.open(buf)
                         { key = cfg.keys.realign, name = "align" },
                         { key = cfg.keys.help, name = "help", run = show_help },
                         {
-                            key = "q",
+                            key = cfg.keys.cancel,
                             name = "cancel",
                             run = function(st)
                                 st.close()
@@ -569,7 +577,7 @@ function M.open(buf)
         -- navigation keys onto it — including <CR>, which it reads as "activate the focused button".
         -- Here <CR> means "write the table back", and the editor's keys have to be the last word on
         -- its own buffer.
-        set_keys(ed)
+        set_keys(ed, handle)
     end)
     return handle ~= nil
 end

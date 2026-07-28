@@ -123,12 +123,35 @@ README.md; the reference below explains the options by group.
                   (false) does a boxed table reveal on insert like every other
                   element? It is not edited in the buffer, so revealing it only
                   breaks the view.
+`tables_nav_mode` ("widget") what `j`/`k` do when they meet a table drawn as
+                  a box, whose rows are hidden and so cannot hold a cursor:
+                    "widget"  walk the table row by row. The real cursor parks
+                              on the displayed row above it and a logical index
+                              moves inside the box, which repaints with that
+                              row lit; stepping past either end hands the
+                              cursor back to the buffer. A table taller than
+                              the window pages inside its own box, centred on
+                              the active row — so the walk never runs off
+                              screen. Entering one puts the parked row at the
+                              top ('scrolloff' is borrowed for the length of
+                              the walk and given back on the way out), which is
+                              what gives the box the whole window to page in.
+                    "stop"    the table is ONE stop the cursor rests on, like a
+                              closed fold; `i` there opens the editor.
+                    "raw"     no interference — `j`/`k` are Neovim's own, and a
+                              boxed table's hidden rows are walked blind.
 `tables_nav_keys` ({ down = "j", up = "k" }) buffer-local motions that step
                   over a table separator row a box is hiding — inside a box
                   that row draws nothing of its own. Either may be false.
 `tables_editor`   the editor's `title`, `width`, `height`, `border` (eight
                   blank cells by default — no ring; any Neovim border value
-                  works) and its own buffer-local `keys`.
+                  works) and its own buffer-local `keys` — `commit` (<CR>),
+                  `cancel` ("q"), `next_cell`, `prev_cell`, `row_add`,
+                  `row_delete`, `column_add`, `column_delete`, `realign` and
+                  `help` ("g?"). Any of them may be false to leave it unbound.
+                  They are mapped onto the EDITOR'S buffer, which the panel
+                  hosts — a key bound to the chassis' own buffer never reaches
+                  it.
 `tables_hide_cursor`
                   (true) hide the hardware cursor while it stands inside a
                   table drawn as a box. Those rows are hidden by the box, so

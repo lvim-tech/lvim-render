@@ -45,7 +45,7 @@ local M = {}
 ---@field boxed table<integer, integer>|nil  first row → last row of every table currently drawn as
 ---   a BOX. Its rows are hidden, so the hardware cursor has nothing to stand on in them — the
 ---   engine reads this to hide the cursor while it is inside one
----@field box_active { first: integer, last: integer, anchor: integer, index: integer, rows: integer }|nil
+---@field box_active { first: integer, last: integer, anchor: integer, index: integer, rows: integer, avail: integer|nil, scrolloff: integer|nil }|nil
 ---   the WIDGET cursor: which row of a boxed table is active while the real cursor is parked on the
 ---   displayed row above it. Neovim has no mapping between a hidden buffer row, a screen row inside
 ---   someone else's `virt_lines`, and a topline — so walking a box is a plugin-owned index, not a

@@ -1689,6 +1689,8 @@ local function emit_table_wrapped(ctx, node, info)
 
     ---@type [string, string][][]
     local lines = {}
+    ---@type integer|nil  which entry of `lines` carries the active row
+    local active_at = nil
     if tconf.box then
         lines[#lines + 1] =
             border_line(tconf.borders, fit.cols, tconf.borders.top_left, tconf.borders.top_mid, tconf.borders.top_right)
@@ -1704,6 +1706,9 @@ local function emit_table_wrapped(ctx, node, info)
         local on_cursor = widget_index ~= nil and index == widget_index or (widget_index == nil and row == cursor)
         for line = 1, height do
             lines[#lines + 1] = wrapped_row(fit, tconf.borders, cells, line, info.aligns, body_hl, on_cursor)
+            if on_cursor and active_at == nil then
+                active_at = #lines
+            end
         end
         if index == 1 and delimiter ~= nil then
             lines[#lines + 1] = border_line(
@@ -1723,6 +1728,38 @@ local function emit_table_wrapped(ctx, node, info)
             tconf.borders.bottom_mid,
             tconf.borders.bottom_right
         )
+    end
+
+    -- PAGINATION. The block is one extmark's worth of virtual lines and Neovim scrolls it as part
+    -- of the anchor row, which the cursor never leaves — so a table taller than the window would
+    -- walk its active row straight off the bottom with nothing to scroll. A widget paginates
+    -- itself: when the block does not fit, only a WINDOW of it is drawn, positioned so the active
+    -- row is always inside, and walking the index is what moves that window. The borders are kept
+    -- at both ends, since a box whose frame scrolls away stops reading as a box.
+    --
+    -- ONLY WHILE IT IS BEING WALKED. A box nobody is walking is drawn WHOLE however tall it is:
+    -- its rows scroll with the buffer like any other virtual lines, so paginating one would do
+    -- nothing but cut its last rows off the document (measured — a 34-row table read as ending at
+    -- "Nginx"). The window is a navigation aid, not a rendering limit.
+    local budget = math.max(4, (active ~= nil and active.avail) or (api.nvim_win_get_height(ctx.win) - 3))
+    if widget_index ~= nil and #lines > budget then
+        local body_first = tconf.box and 2 or 1
+        local body_last = tconf.box and (#lines - 1) or #lines
+        local room = budget - (tconf.box and 2 or 0)
+        local centre = active_at or body_first
+        local first = math.max(body_first, math.min(centre - math.floor(room / 2), body_last - room + 1))
+        ---@type [string, string][][]
+        local paged = {}
+        if tconf.box then
+            paged[#paged + 1] = lines[1]
+        end
+        for i = first, math.min(first + room - 1, body_last) do
+            paged[#paged + 1] = lines[i]
+        end
+        if tconf.box then
+            paged[#paged + 1] = lines[#lines]
+        end
+        lines = paged
     end
 
     op(ctx, sr - 1, 0, { virt_lines = lines })

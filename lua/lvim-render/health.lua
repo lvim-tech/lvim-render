@@ -437,6 +437,15 @@ function M.check()
         end
     end
 
+    local nav_mode = config.tables_nav_mode
+    if nav_mode ~= "widget" and nav_mode ~= "stop" and nav_mode ~= "raw" then
+        health.error(('tables_nav_mode must be "widget", "stop" or "raw", got %s'):format(tostring(nav_mode)))
+    elseif nav_mode == "widget" then
+        health.ok("tables_nav_mode: widget — j/k walk a boxed table row by row, paging inside the box")
+    else
+        health.info(("tables_nav_mode: %s — a boxed table's rows are not walked"):format(nav_mode))
+    end
+
     for name, key in pairs(config.tables_nav_keys or {}) do
         if key ~= false and (type(key) ~= "string" or key == "") then
             health.error(("tables_nav_keys.%s must be a key string or false, got %s"):format(name, tostring(key)))

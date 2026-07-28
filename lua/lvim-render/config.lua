@@ -387,6 +387,10 @@ local M = {
             column_add = "<C-c>",
             column_delete = "<C-x>",
             realign = "<C-a>",
+            -- Closing without writing anything back. Mapped by the EDITOR onto its own buffer: the
+            -- panel hosts this module's buffer, so a key the chassis binds to its own never reaches
+            -- it, and the footer's `q` was a button nobody could press.
+            cancel = "q",
             -- The set's canonical cheatsheet key.
             help = "g?",
         },
