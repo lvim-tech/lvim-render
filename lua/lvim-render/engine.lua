@@ -366,12 +366,19 @@ function M.attach(buf)
                 -- belong to the row ABOVE the table, so the view is nudged one screen line per
                 -- keypress while the cursor is inside and that block is not yet fully shown —
                 -- which tracks, since one source row is one or more box lines.
+                -- THE VIEW MOVES, THE CURSOR DOES NOT. CTRL-Y/CTRL-E were the obvious way to nudge
+                -- it and the wrong one: they push the CURSOR back into view when it would fall out,
+                -- so a `k` next to a box moved the cursor DOWN instead of up (reported, twice in a
+                -- row). `winrestview` scrolls without touching the cursor, and the cursor is passed
+                -- back explicitly so nothing can drift.
                 local span = render.boxed_span(buf, row)
                 if span ~= nil then
-                    if delta < 0 and vim.fn.line("w0") > span.first then
-                        pcall(vim.cmd, "normal! \25") -- CTRL-Y
+                    local view = vim.fn.winsaveview()
+                    local pos = api.nvim_win_get_cursor(0)
+                    if delta < 0 and view.topline > span.first + 1 then
+                        vim.fn.winrestview({ topline = view.topline - 1, lnum = pos[1], col = pos[2] })
                     elseif delta > 0 and vim.fn.line("w$") < span.last + 1 then
-                        pcall(vim.cmd, "normal! \5") -- CTRL-E
+                        vim.fn.winrestview({ topline = view.topline + 1, lnum = pos[1], col = pos[2] })
                     end
                 end
             end, {
