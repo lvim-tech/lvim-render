@@ -529,6 +529,7 @@ function M.open(buf)
                         { key = cfg.keys.row_add, name = "+row" },
                         { key = cfg.keys.column_add, name = "+col" },
                         { key = cfg.keys.realign, name = "align" },
+                        { key = cfg.keys.help, name = "help", run = show_help },
                         {
                             key = "q",
                             name = "cancel",

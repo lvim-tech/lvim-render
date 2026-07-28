@@ -1677,9 +1677,14 @@ local function emit_table_wrapped(ctx, node, info)
     ctx.extend.first = math.min(ctx.extend.first, sr - 1)
     ctx.extend.last = math.max(ctx.extend.last, end_row)
 
-    -- The row the cursor is on, so the box can paint it like the cursor line. The source rows are
-    -- hidden and Neovim draws no 'cursorline' over virtual lines, so without this the cursor would
-    -- simply be invisible while it travels through the table.
+    -- WHICH ROW READS AS ACTIVE. Two sources, in order: the WIDGET index when the reader is
+    -- walking this table (the real cursor is parked on the displayed row above it, so there is no
+    -- cursor row to read), and otherwise the real cursor's own row — it can still land inside by a
+    -- search or a `:N`. Neovim draws no 'cursorline' over virtual lines either way, so the box
+    -- paints its own active row or none is visible at all.
+    local bst = state.get(ctx.buf)
+    local active = bst ~= nil and bst.box_active or nil
+    local widget_index = (active ~= nil and active.first == sr) and active.index or nil
     local cursor = ctx.win == api.nvim_get_current_win() and (api.nvim_win_get_cursor(ctx.win)[1] - 1) or -1
 
     ---@type [string, string][][]
@@ -1696,7 +1701,7 @@ local function emit_table_wrapped(ctx, node, info)
             height = math.max(height, #wrapped)
         end
         local body_hl = (index == 1 and tconf.head) and "LvimRenderTableHead" or "Normal"
-        local on_cursor = row == cursor
+        local on_cursor = widget_index ~= nil and index == widget_index or (widget_index == nil and row == cursor)
         for line = 1, height do
             lines[#lines + 1] = wrapped_row(fit, tconf.borders, cells, line, info.aligns, body_hl, on_cursor)
         end
@@ -1723,8 +1728,13 @@ local function emit_table_wrapped(ctx, node, info)
     op(ctx, sr - 1, 0, { virt_lines = lines })
     -- Its rows are hidden, so the hardware cursor standing in them has nothing to stand ON: the
     -- engine reads this span and hides it while the cursor is inside (the box paints the active
-    -- row itself, which is what you actually navigate by).
+    -- row itself, which is what you actually navigate by). The ROW COUNT rides along, because the
+    -- widget index needs to know where the table ends and the buffer resumes.
     record(end_row)
+    if bst ~= nil then
+        bst.box_rows = bst.box_rows or {}
+        bst.box_rows[sr] = #rows
+    end
     for row = sr, end_row do
         op(ctx, row, 0, { conceal_lines = "" })
         -- The rows belong to the box: the inline pass would otherwise decorate text that is not

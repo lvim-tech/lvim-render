@@ -45,6 +45,13 @@ local M = {}
 ---@field boxed table<integer, integer>|nil  first row → last row of every table currently drawn as
 ---   a BOX. Its rows are hidden, so the hardware cursor has nothing to stand on in them — the
 ---   engine reads this to hide the cursor while it is inside one
+---@field box_active { first: integer, last: integer, anchor: integer, index: integer, rows: integer }|nil
+---   the WIDGET cursor: which row of a boxed table is active while the real cursor is parked on the
+---   displayed row above it. Neovim has no mapping between a hidden buffer row, a screen row inside
+---   someone else's `virt_lines`, and a topline — so walking a box is a plugin-owned index, not a
+---   cursor position (see `tables_nav_mode`)
+---@field box_rows table<integer, integer>|nil  first row of a boxed table → how many DATA rows it
+---   drew, so the widget index knows where the table ends
 ---@field sep_levels table<integer, string>|nil  0-based row → foldexpr answer for a BLANK row that
 ---   separates two sections. Such a row belongs to the ENCLOSING subtree, not to the section above
 ---   it: inside the fold it vanishes when the section collapses and the two headings stick

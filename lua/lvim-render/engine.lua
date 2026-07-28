@@ -359,22 +359,59 @@ function M.attach(buf)
                     pcall(vim.cmd, ("normal! %s"):format(delta < 0 and "k" or "j"))
                     row = api.nvim_win_get_cursor(0)[1] - 1
                 end
-                -- A BOXED TABLE IS ONE STOP — the closed-fold model, and the cursor RESTS ON IT
-                -- rather than jumping over it. That distinction is the whole point: a table you
-                -- cannot put the cursor on is a table you cannot open, and `i` on it is how the
-                -- editor is reached.
-                --
-                -- Walking the cursor through the table's own rows is what cannot work, and the
-                -- reason is structural rather than awkward: those rows are HIDDEN, so they have no
-                -- screen height, and Neovim's rule that the cursor stays visible then fights every
-                -- scroll. Measured — CTRL-Y scrolls (topline 132→131→130) but drags the cursor with
-                -- it (136→135→134); `winrestview` does not move at all, because the view snaps back
-                -- to the nearest thing it can show. One stop needs neither: the box is either on
-                -- screen or scrolled past as a unit.
-                local span = config.tables_nav_step_over and render.boxed_span(buf, row) or nil
+                local mode = config.tables_nav_mode
+                if mode == "raw" then
+                    return
+                end
+
+                -- THE WIDGET. The real cursor parks on the DISPLAYED row above the table and a
+                -- logical index walks the box, which repaints with that row active. This is the
+                -- only shape that walks a boxed table row by row: its rows are hidden, so Neovim
+                -- can neither show a cursor on one nor scroll to it — measured here (CTRL-Y scrolls
+                -- but drags the cursor; `winrestview` normalises a topline inside the hidden run
+                -- away) and confirmed independently afterwards. Nothing here asks the view to do
+                -- either: the cursor never leaves a real, displayed line.
+                local st = state.get(buf)
+                local span = render.boxed_span(buf, row)
+                if mode == "widget" then
+                    local act = st ~= nil and st.box_active or nil
+                    if act ~= nil then
+                        -- Already walking one: move the index, and hand the cursor back to the
+                        -- buffer when it steps past either end.
+                        local next_index = act.index + delta
+                        if next_index >= 1 and next_index <= act.rows then
+                            act.index = next_index
+                            redraw(buf)
+                            api.nvim_win_set_cursor(0, { act.anchor + 1, 0 })
+                            return
+                        end
+                        st.box_active = nil
+                        local total = api.nvim_buf_line_count(buf)
+                        local out = delta < 0 and act.anchor or (act.last + 2)
+                        api.nvim_win_set_cursor(0, { math.max(1, math.min(out, total)), 0 })
+                        redraw(buf)
+                        return
+                    end
+                    if span ~= nil and st ~= nil then
+                        -- Entering: park on the row above and light the end the reader came from.
+                        local rows = (st.box_rows or {})[span.first] or 1
+                        st.box_active = {
+                            first = span.first,
+                            last = span.last,
+                            anchor = span.first - 1,
+                            rows = rows,
+                            index = delta > 0 and 1 or rows,
+                        }
+                        api.nvim_win_set_cursor(0, { math.max(1, span.first), 0 })
+                        redraw(buf)
+                    end
+                    return
+                end
+
+                -- "stop": the table is ONE stop the cursor RESTS ON, like a closed fold — `i` there
+                -- opens the editor. It never jumps over: a table you cannot put the cursor on is a
+                -- table you cannot open.
                 if span ~= nil then
-                    -- Landing on the FIRST row from either direction, exactly as a closed fold puts
-                    -- the cursor on its first line however you arrive at it.
                     local total = api.nvim_buf_line_count(buf)
                     api.nvim_win_set_cursor(0, { math.max(1, math.min(span.first + 1, total)), 0 })
                 end
@@ -558,6 +595,17 @@ end
 function M.on_cursor_moved()
     local win = api.nvim_get_current_win()
     local buf = api.nvim_win_get_buf(win)
+    -- The widget owns the cursor's position while it is walking a box; a move that lands anywhere
+    -- else — a search, a `:N`, a mouse click — ends the walk, so the box stops claiming an active
+    -- row nobody is on.
+    local st = state.get(buf)
+    if st ~= nil and st.box_active ~= nil then
+        local row = api.nvim_win_get_cursor(win)[1] - 1
+        if row ~= st.box_active.anchor and not (row >= st.box_active.first and row <= st.box_active.last) then
+            st.box_active = nil
+            redraw(buf)
+        end
+    end
     sync_box_cursor(buf)
     if not M.eligible(buf) then
         return
@@ -611,6 +659,16 @@ function M.on_mode_changed(from, to)
     if config.tables_insert_opens_editor and to:sub(1, 1) == "i" and from:sub(1, 1) ~= "i" then
         local st = state.get(buf)
         local row = api.nvim_win_get_cursor(0)[1] - 1
+        -- While the widget is walking a table the cursor sits on the row ABOVE it, so that row
+        -- counts as being "in" the table for this purpose — it is where `i` is pressed.
+        if st ~= nil and st.box_active ~= nil and row == st.box_active.anchor then
+            vim.schedule(function()
+                vim.cmd("stopinsert")
+                api.nvim_win_set_cursor(0, { st.box_active.first + 1, 0 })
+                require("lvim-render.table_editor").open(buf)
+            end)
+            return
+        end
         for first, last in pairs(st ~= nil and st.boxed or {}) do
             if row >= first and row <= last then
                 vim.schedule(function()

@@ -290,9 +290,10 @@
 ---@field tables_box_reveal boolean  a table drawn as a BOX reveals on insert like every other
 ---   element. False by default: a boxed table is not edited in the buffer — its rows are hidden
 ---   and `:LvimRender table` is where its cells change — so the reveal would only break the view
----@field tables_nav_step_over boolean  j/k treat a boxed table as ONE stop, like a closed fold.
----   The alternative (walking its rows) cannot scroll into the table from beyond the window edge:
----   its rows are hidden, so the cursor-visibility rule has nothing to scroll to
+---@field tables_nav_mode "widget"|"stop"|"raw"  how j/k treat a table drawn as a box: walk its rows
+---   with a plugin-owned index while the cursor parks on the displayed row above it ("widget"),
+---   treat the whole table as one stop the cursor rests on ("stop"), or leave j/k alone ("raw" —
+---   the cursor then walks hidden rows, invisibly, and the view sticks at the window's edge)
 ---@field tables_nav_keys { down: string|false, up: string|false }  buffer-local motions that step
 ---   over a table separator row a box is hiding — the only buffer row inside a box that draws
 ---   nothing of its own
@@ -400,21 +401,26 @@ local M = {
     -- the box apart on `i` would break the view for an edit that does not happen there. Set true
     -- to get the old behaviour — the table shown raw, in place, whenever you enter insert in it.
     tables_box_reveal = false,
-    -- Does j/k treat a table drawn as a BOX as ONE stop, the way it treats a closed fold?
+    -- How j/k treat a table drawn as a BOX. Its rows are HIDDEN — that is what lets it fit a
+    -- wrapping window at all — and a hidden row has no screen position, so Neovim can neither put
+    -- a visible cursor on it nor scroll to it. Measured, then confirmed independently: there is no
+    -- mapping between a cursor's buffer row, its screen row inside another extmark's `virt_lines`,
+    -- and the window's topline; CTRL-Y scrolls but drags the cursor, and `winrestview` normalises a
+    -- topline inside the hidden run away. Three honest answers, none of them a cursor walking
+    -- hidden lines:
     --
-    -- TRUE (default) — the cursor RESTS ON the table as one stop and `i` there opens the editor,
-    -- exactly as a closed fold is one stop that `zo` opens. It never jumps over: a table you cannot
-    -- put the cursor on is a table you cannot open. The alternative was
-    -- tried and is structurally broken, not merely awkward: the box HIDES the table's rows, so they
-    -- have no screen height, and Neovim's rule that the cursor stays visible then fights every
-    -- scroll. Measured: CTRL-Y scrolls (topline 132→131→130) but drags the cursor with it
-    -- (136→135→134); `winrestview` does not move at all, because the view snaps back to the
-    -- nearest thing it can show — which left `k` unable to scroll up out of a table entirely.
-    --
-    -- FALSE — the cursor walks the rows one by one and the box paints the row it is on, which
-    -- reads nicely as long as the whole table is already on screen; approach one from beyond the
-    -- window's edge and the view will stick, for the reason above.
-    tables_nav_step_over = true,
+    --   "widget" — NOT yet the default: it is implemented but not yet proven in live use (the
+    --     first measurement showed the index engaging while the cursor stuck to the anchor, and a
+    --     mapping that fires many times per keypress; that needs its own pass). The real cursor
+    --     parks on the DISPLAYED row above the table and j/k
+    --     move a logical row index inside the box, which repaints with that row active. Walking the
+    --     table row by row, without ever asking the view to scroll to a zero-height line. Leaving
+    --     either end hands the cursor back to the buffer.
+    --   "stop" (default) — the table is ONE stop the cursor rests on, like a closed fold; `i`
+    --     opens the editor from there. Verified in live use.
+    --   "raw"    — no special handling: j/k walk the hidden rows. The cursor is then invisible
+    --     inside the table and the view will stick when approaching from beyond the window's edge.
+    tables_nav_mode = "stop",
     -- j/k inside an attached buffer STEP OVER a table separator row that a box is hiding: the box
     -- draws its own junction line, so the source's `|---|---|` shows nothing of its own and
     -- stopping on it is a stop for nothing. Set either to false to leave that key alone.
