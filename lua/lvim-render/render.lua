@@ -190,6 +190,24 @@ local LATEX_SECTIONS = {
     subparagraph = true,
 }
 
+--- Is this sectioning node a REAL heading? The grammar does not stop at `\verb|…|`'s delimiter,
+--- so `\verb|\section|` in running text parses as a genuine `section` whose title is whatever
+--- follows it — two of them turned the demo document's last paragraph into two level-1 headings
+--- and cut the real section's fold short (measured). A sectioning command begins its line in
+--- every LaTeX document written by hand; one that appears mid-sentence is text about LaTeX, not
+--- structure in it.
+---@param node TSNode
+---@param buf integer
+---@return boolean
+local function latex_is_heading(node, buf)
+    local sr, sc = node:range()
+    if sc == 0 then
+        return true
+    end
+    local line = vim.api.nvim_buf_get_lines(buf, sr, sr + 1, false)[1] or ""
+    return line:sub(1, sc):match("^%s*$") ~= nil
+end
+
 --- Heading level of a heading node, read from its marker child. Every format spells that marker
 --- differently — markdown names the level in the node TYPE (`atx_h2_marker`), typst counts the
 --- `=` run — so the level is decoded here, once, rather than in the emitter.
@@ -640,6 +658,9 @@ local function emit_heading(ctx, node, setext)
     end
     local level, marker = heading_level(node)
     if level == nil then
+        return
+    end
+    if LATEX_SECTIONS[node:type()] and not latex_is_heading(node, ctx.buf) then
         return
     end
     local sr, _, er, ec = node:range()
@@ -2682,15 +2703,18 @@ end
 
 --- The name a LaTeX environment was opened with (`itemize` for `\\begin{itemize}`).
 ---@param env TSNode  a `generic_environment` (or any node with a `begin` child)
+---@param buf integer  THE BUFFER BEING DRAWN. Reading the text out of buffer 0 instead threw
+---   `Index out of bounds` from inside the decoration provider the moment the current buffer was
+---   not the rendered one — a node's range means nothing in another buffer.
 ---@return string|nil
-local function latex_env_name(env)
+local function latex_env_name(env, buf)
     for child in env:iter_children() do
         if child:type() == "begin" then
             for sub in child:iter_children() do
                 if sub:type() == "curly_group_text" then
                     for leaf in sub:iter_children() do
                         if leaf:type() == "text" then
-                            return vim.treesitter.get_node_text(leaf, 0)
+                            return ts.get_node_text(leaf, buf)
                         end
                     end
                 end
@@ -2906,7 +2930,7 @@ local function emit_latex_environment(ctx, node)
     if lconf == nil or not lconf.enabled or not lconf.conceal_environment then
         return
     end
-    if not (lconf.environments or {})[latex_env_name(node) or ""] then
+    if not (lconf.environments or {})[latex_env_name(node, ctx.buf) or ""] then
         return
     end
     local sr, _, er, ec = node:range()
@@ -2953,7 +2977,7 @@ local function emit_latex_item(ctx, node)
     local parent = node:parent()
     local env_name, index = nil, 1
     if parent ~= nil then
-        env_name = latex_env_name(parent)
+        env_name = latex_env_name(parent, ctx.buf)
         for child in parent:iter_children() do
             if child:type() == "enum_item" then
                 if child:id() == node:id() then
@@ -2970,7 +2994,7 @@ local function emit_latex_item(ctx, node)
     local depth = 0
     local walker = node:parent()
     while walker ~= nil do
-        if walker:type() == "generic_environment" and lists[latex_env_name(walker) or ""] then
+        if walker:type() == "generic_environment" and lists[latex_env_name(walker, ctx.buf) or ""] then
             depth = depth + 1
         end
         walker = walker:parent()

@@ -190,13 +190,34 @@ function M.rebuild(buf)
             end
         else
             local level = heading_level(node)
+            -- The same rule the renderer applies: `\verb|\section|` in running text parses as a
+            -- genuine section, and left in the outline it cut the real section's fold short.
+            if level ~= nil and LATEX_SECTIONS[node:type()] then
+                local sr, sc = node:range()
+                if sc > 0 then
+                    local line = api.nvim_buf_get_lines(buf, sr, sr + 1, false)[1] or ""
+                    if line:sub(1, sc):match("^%s*$") == nil then
+                        level = nil
+                    end
+                end
+            end
             if level ~= nil then
                 local row = node:range()
+                -- A LATEX SECTION KNOWS ITS OWN END: the grammar nests everything that follows the
+                -- command inside the node, and the node stops where the next same-level command
+                -- (or `\\end{document}`) begins. Recorded as a CEILING for the computed end, so
+                -- the closing line of the document does not fold away with the last section.
+                local node_end = nil
+                if LATEX_SECTIONS[node:type()] then
+                    local _, _, ner, nec = node:range()
+                    node_end = nec == 0 and ner - 1 or ner
+                end
                 outline[#outline + 1] = {
                     row = row,
                     level = level,
                     title = heading_title(node, buf),
                     end_row = 0, -- filled below
+                    node_end = node_end,
                     setext = query.captures[id] == "setext",
                 }
                 max_level = math.max(max_level, level)
@@ -217,7 +238,7 @@ function M.rebuild(buf)
         for level = 1, h.level do
             nearest = math.min(nearest, next_row[level])
         end
-        h.end_row = nearest
+        h.end_row = h.node_end ~= nil and math.min(nearest, h.node_end) or nearest
         next_row[h.level] = h.row
     end
 
