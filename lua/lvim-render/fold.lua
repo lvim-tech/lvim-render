@@ -272,6 +272,42 @@ function M.rebuild(buf)
     end
     st.sep_levels = next(sep) ~= nil and sep or nil
 
+    -- WHERE THE LEVEL DROPS. `foldexpr` says `>N` on a heading row and `=` everywhere else, and
+    -- `=` CARRIES THE PREVIOUS LEVEL — so a fold runs until something states a lower one. In
+    -- markdown, org and typst nothing has to: a section ends exactly where the next begins. A
+    -- LaTeX section ends at its own node, and `\\end{document}` sits outside every section — so
+    -- the last fold ran to the end of the buffer and swallowed it (reported from a screenshot).
+    -- The row after each subtree's end therefore states the level that ENCLOSES it, which is 0
+    -- when nothing does.
+    ---@param row integer
+    ---@return integer
+    local function level_at(row)
+        local level = 0
+        for _, h in ipairs(outline) do
+            if h.row <= row and row <= h.end_row then
+                level = math.max(level, h.level)
+            end
+        end
+        return level
+    end
+    ---@type table<integer, string>
+    local drops = {}
+    local starts = {}
+    for _, h in ipairs(outline) do
+        starts[h.row] = true
+    end
+    for _, h in ipairs(outline) do
+        local after = h.end_row + 1
+        -- A row that STARTS a heading states its own level already; one past the buffer is nobody's.
+        if after < line_count and not starts[after] then
+            local enclosing = level_at(after)
+            if enclosing < h.level then
+                drops[after] = tostring(enclosing)
+            end
+        end
+    end
+    st.fold_drops = next(drops) ~= nil and drops or nil
+
     local by_row = {}
     for _, h in ipairs(outline) do
         by_row[h.row] = h
@@ -358,6 +394,12 @@ local function expr_impl()
         local sl = st.sep_levels[vim.v.lnum - 1]
         if sl ~= nil then
             return sl
+        end
+    end
+    if st.fold_drops ~= nil then
+        local drop = st.fold_drops[vim.v.lnum - 1]
+        if drop ~= nil then
+            return drop
         end
     end
     if st.table_folds ~= nil then

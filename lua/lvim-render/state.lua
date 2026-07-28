@@ -56,6 +56,9 @@ M.ready = false
 ---   cursor position (see `tables_nav_mode`)
 ---@field box_rows table<integer, integer>|nil  first row of a boxed table → how many DATA rows it
 ---   drew, so the widget index knows where the table ends
+---@field fold_drops table<integer, string>|nil  row → the fold level that ENCLOSES it, stated
+---   where a subtree ends and nothing else would state a lower one (`=` carries the previous
+---   level, so without this the last fold swallows every row to the end of the buffer)
 ---@field sep_levels table<integer, string>|nil  0-based row → foldexpr answer for a BLANK row that
 ---   separates two sections. Such a row belongs to the ENCLOSING subtree, not to the section above
 ---   it: inside the fold it vanishes when the section collapses and the two headings stick
