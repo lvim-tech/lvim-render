@@ -26,6 +26,9 @@
 ---@field text "accent"|"theme"  who colours the heading TEXT: "accent" (default) paints it with
 ---   the level's own colour — six visibly different headings whatever the theme does; "theme"
 ---   leaves the text to the colorscheme's own markup.heading groups and keeps only band + icon
+---@field icon_gap integer?  spaces drawn AFTER the level icon. A format whose marker leaves its
+---   own trailing space on screen needs none (markdown's `## `, org's `** `); LaTeX's braces
+---   conceal to nothing, so without it the title starts against the glyph
 ---@field setext_underline string what a setext `===`/`---` underline row is redrawn with, repeated
 ---   to the underline's own width; "" leaves the raw underline characters as they are
 ---@field levels LvimRenderHeadingLevel[]  exactly six entries, H1 first
@@ -824,6 +827,10 @@ local M = {
             band = true,
             conceal_markers = true,
             text = "accent",
+            -- `\\section{Title}` conceals to NOTHING — command and braces alike — so the icon has
+            -- no marker space to sit against and needs a gap of its own. The other formats leave
+            -- their marker's trailing space on screen and inherit theirs.
+            icon_gap = 1,
             -- LaTeX has no underlined heading form; the key stays for shape parity.
             setext_underline = "",
             levels = {

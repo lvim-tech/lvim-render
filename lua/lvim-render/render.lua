@@ -692,8 +692,14 @@ local function emit_heading(ctx, node, setext)
     end
     local icon = spec.icon or ""
     if icon ~= "" and not raw then
+        -- THE GAP AFTER THE ICON. Markdown, org and typst all leave their marker's own trailing
+        -- space on screen, so the icon lands with a gap for free; `\section{Title}` has no such
+        -- space — the title begins the instant the braces conceal — and the icon ended up glued
+        -- to the first letter. Stated per format rather than assumed.
         op(ctx, msr, setext and 0 or mec, {
-            virt_text = { { string.rep(" ", spec.pad or 0) .. icon, grp } },
+            virt_text = {
+                { string.rep(" ", spec.pad or 0) .. icon .. string.rep(" ", hconf.icon_gap or 0), grp },
+            },
             virt_text_pos = "inline",
         })
     end

@@ -511,6 +511,7 @@ require("lvim-render").setup({
             band = true,
             conceal_markers = true, -- the command AND its braces
             text = "accent",
+            icon_gap = 1, -- spaces after the icon: `\section{…}` leaves no marker space of its own
             setext_underline = "", -- LaTeX has no underlined heading form
             levels = {
                 { icon = "󰉫", pad = 1 },

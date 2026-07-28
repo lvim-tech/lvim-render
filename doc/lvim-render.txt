@@ -321,6 +321,11 @@ README.md; the reference below explains the options by group.
                   `\cite` as an icon plus the name. The three formula forms
                   (`$…$`, `\[…\]`, a math environment) run through the SAME
                   symbol table markdown's math uses.
+`<format>.headings.icon_gap`
+                  Spaces drawn AFTER the level icon. Markdown, org and typst
+                  leave their marker's own trailing space on screen and need
+                  none; `\section{Title}` conceals to nothing at all, so
+                  without a gap the title starts against the glyph.
 `math.typst_aliases`
                   Typst spells the same symbols differently — `infinity`,
                   `oo`, `arrow.r`, `eq.not` — and the shared table is keyed by
