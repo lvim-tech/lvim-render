@@ -119,7 +119,7 @@ function M.check()
     for _, format in ipairs(engine.formats) do
         implemented[format] = true
     end
-    for _, format in ipairs({ "markdown", "org", "typst", "asciidoc", "latex" }) do
+    for _, format in ipairs({ "markdown", "org", "typst", "latex" }) do
         local fconf = config[format]
         if type(fconf) ~= "table" then
             health.error(("config.%s is missing"):format(format))

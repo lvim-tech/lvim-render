@@ -322,7 +322,6 @@
 ---@field markdown LvimRenderFormatConfig
 ---@field org LvimRenderFormatConfig
 ---@field typst LvimRenderFormatConfig
----@field asciidoc LvimRenderFormatConfig
 ---@field latex LvimRenderFormatConfig
 ---@field math LvimRenderMathConfig  common — math is an element of markdown AND org, not a format
 ---@field highlights table<string, LvimRenderHighlightSpec|LvimRenderHighlightSpec[]>  the shared
@@ -807,38 +806,6 @@ local M = {
         -- `\#` → `#`: the backslash conceals, the character shows plain.
         escapes = { enabled = true },
     },
-    -- AsciiDoc: inert until its grammar is reachable (it is absent from the parser registry);
-    -- health reports the blocked state truthfully.
-    asciidoc = {
-        enabled = true,
-        filetypes = { "asciidoc" },
-        headings = {
-            enabled = true,
-            band = true,
-            conceal_markers = true,
-            text = "accent",
-            setext_underline = "",
-            levels = {
-                { icon = "󰉫", pad = 0 },
-                { icon = "󰉬", pad = 0 },
-                { icon = "󰉭", pad = 0 },
-                { icon = "󰉮", pad = 0 },
-                { icon = "󰉯", pad = 0 },
-                { icon = "󰉰", pad = 0 },
-            },
-        },
-        lists = {
-            enabled = true,
-            bullets = { "●", "○", "◆", "◇" },
-        },
-        rule = {
-            enabled = true,
-            glyph = "─",
-            icon = "◆",
-        },
-    },
-    -- Standalone .tex buffers are lvim-tex's conceal domain: OFF by default, explicit opt-in only,
-    -- documented as a double-decoration risk. LaTeX MATH inside markdown/org is `math` below.
     latex = {
         enabled = true,
         filetypes = { "tex", "latex", "plaintex" },

@@ -46,7 +46,7 @@ end
 ---@return string[]
 local function attach_patterns()
     local out = {}
-    for _, format in ipairs({ "markdown", "org", "typst", "asciidoc", "latex" }) do
+    for _, format in ipairs({ "markdown", "org", "typst", "latex" }) do
         local fconf = config[format]
         if type(fconf) == "table" and fconf.enabled then
             vim.list_extend(out, fconf.filetypes or {})

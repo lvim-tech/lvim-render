@@ -6,8 +6,8 @@ line, and every heading folds its subtree with a rendered fold line and an org-s
 Turn it off and the buffer is exactly as it was, fold options included.
 
 Part of the [lvim-tech](https://github.com/lvim-tech) plugin set. It renders **markdown**,
-**typst**, **org** and **latex**; the `asciidoc` block is the fixed surface its renderer will fill
-once a grammar for it is packaged (health reports each format's status).
+**typst**, **org** and **latex** — `:checkhealth lvim-render` reports each format's status,
+including a grammar that is missing on this machine.
 
 ## How it works
 
@@ -168,7 +168,7 @@ require("lvim-render").setup({})
 ## Configuration
 
 The full default config. What is COMMON to every format lives at the top level; everything a
-FORMAT owns lives in its own block (`markdown`, `org`, `typst`, `asciidoc`, `latex`).
+FORMAT owns lives in its own block (`markdown`, `org`, `typst`, `latex`).
 
 ```lua
 require("lvim-render").setup({
@@ -475,40 +475,6 @@ require("lvim-render").setup({
         -- `\#` → `#`: the backslash conceals, the character shows plain.
         escapes = { enabled = true },
     },
-    -- AsciiDoc: inert until its grammar is reachable; health reports the blocked state.
-    asciidoc = {
-        enabled = true,
-        filetypes = { "asciidoc" },
-        headings = {
-            enabled = true,
-            band = true,
-            conceal_markers = true,
-            text = "accent",
-            setext_underline = "",
-            levels = {
-                { icon = "󰉫", pad = 0 },
-                { icon = "󰉬", pad = 0 },
-                { icon = "󰉭", pad = 0 },
-                { icon = "󰉮", pad = 0 },
-                { icon = "󰉯", pad = 0 },
-                { icon = "󰉰", pad = 0 },
-            },
-        },
-        lists = {
-            enabled = true,
-            bullets = { "●", "○", "◆", "◇" },
-        },
-        rule = {
-            enabled = true,
-            glyph = "─",
-            icon = "◆",
-        },
-    },
-    -- Standalone .tex buffers belong to lvim-tex: OFF by default, explicit opt-in only
-    -- (double-decoration risk). LaTeX MATH inside markdown/org is `math` below.
-    -- LaTeX: a real renderer — the sectioning ladder read from the NESTING (an article's
-    -- `\section` and a book's `\chapter` are both the outermost thing in their document), and
-    -- only the macros named below are drawn. Every other macro is left exactly as written.
     latex = {
         enabled = true,
         filetypes = { "tex", "latex", "plaintex" },

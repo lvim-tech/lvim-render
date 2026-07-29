@@ -45,9 +45,8 @@ The text in the file never changes. Turn the plugin off and the buffer — and
 the window's fold and conceal options — are exactly as they were.
 
 markdown, typst (|lvim-render-typst-render|) and org (|lvim-render-org-render|)
-render today. The `asciidoc` and `latex` config blocks are the fixed surface
-their renderers will fill in later phases; |:checkhealth| reports each
-format's status.
+render today. The `latex` block is the fixed surface its renderer fills in a
+later phase; |:checkhealth| reports each format's status.
 
 ==============================================================================
 2. REQUIREMENTS                                     *lvim-render-requirements*
@@ -456,13 +455,6 @@ NO `rule` block: `-----` is plain text in this grammar, with no node to hang a
 drawn line on. It carries `checkboxes`, `quotes`, `code`, `links`,
 `inline_code`, `emphasis` and `frontmatter` (the drawers and `#+…:` directives)
 alongside the common heading and list blocks.
-
-                                                       *lvim-render-asciidoc*
-`asciidoc` carries the same block shape as `markdown` (enabled, filetypes,
-headings, lists, rule). Its renderer lands in a later phase — until then its
-buffers do not attach, and health reports exactly that. It additionally waits
-on its grammar becoming reachable: unlike org's, no upstream tree-sitter
-grammar for it is packaged in a form the registry seam can point at yet.
 
 `latex` is OFF by default: standalone .tex buffers belong to lvim-tex, and
 enabling both is a double-decoration risk the user must opt into knowingly.
