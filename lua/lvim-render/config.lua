@@ -199,6 +199,9 @@
 ---   strips the WHOLE quote when the cursor enters it — one element, one reveal; "row" strips
 ---   only the edited row's border (the quieter choice for very long quotes)
 
+---@class LvimRenderWinOptions  filetype (or "*") -> { option name -> value }; window-local
+---   options this plugin owns while it renders that filetype, restored when it stops
+
 ---@class LvimRenderConcealConfig
 ---@field level integer   'conceallevel' applied to attached windows (2 hides the markers fully)
 ---@field cursor string   'concealcursor' likewise; "" reveals concealed text on the cursor line
@@ -291,6 +294,7 @@
 ---   renders raw
 ---@field reveal LvimRenderRevealConfig
 ---@field conceal LvimRenderConcealConfig
+---@field win_options LvimRenderWinOptions
 ---@field split LvimRenderSplitConfig
 ---@field tables_editor { title: string, width: number, height: number, border: string[]|string, table_mode: boolean, keys: table<string, string|false> }
 ---   the full-screen table editor: its title, its size (fractions of the editor), and its own
@@ -342,6 +346,23 @@ local M = {
     -- detach, and a fighting owner is reported by health — never silently tolerated.
     -- "nvc": conceal stays active at the cursor in normal/visual/cmdline; insert reveals it.
     conceal = { level = 2, cursor = "nvc" },
+    -- WINDOW OPTIONS THIS PLUGIN OWNS while a window shows a rendered buffer — the same contract
+    -- as `conceal` above: recorded on attach, re-asserted at the buffer-reenter seam, and put back
+    -- exactly as they were when rendering stops or the buffer is detached. This is where a
+    -- rendered document gets window chrome of its own: a decorated document is a page, and the
+    -- rulers that help while writing code (the column marker, the cursor's own column) are noise
+    -- across a table's box or a heading band.
+    --
+    -- `["*"]` applies to EVERY rendered filetype; a filetype key adds to it and wins on a clash.
+    -- Any window-local option name is accepted, so this list is meant to be edited — add what a
+    -- document should look like, or set it to `{}` and nothing here is touched at all.
+    -- EMPTY BY DEFAULT: this plugin renders a document, it does not have opinions about the
+    -- reader's window chrome. Fill it in the host config, e.g.
+    --   win_options = {
+    --       ["*"] = { colorcolumn = "", cursorcolumn = false },  -- no rulers across a document
+    --       markdown = { linebreak = true },
+    --   }
+    win_options = {},
     -- The side-by-side preview (`:LvimRender split`). A MIRROR buffer, not the same buffer in two
     -- windows: inline virtual text and virtual lines cannot be ephemeral, so every icon and border
     -- is a real buffer extmark that every window showing that buffer draws — and window-scoped

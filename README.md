@@ -183,6 +183,15 @@ require("lvim-render").setup({
         quotes = "element", -- a quote/callout reveals WHOLE | "row" = only the edited row's border
     },
     conceal = { level = 2, cursor = "nvc" }, -- owned per window: recorded, re-asserted, restored
+    -- Window options this plugin OWNS while a window shows a rendered buffer, on the same
+    -- contract as `conceal`: recorded on attach, re-asserted at the buffer-reenter seam,
+    -- handed back exactly as found when rendering stops. `["*"]` covers every rendered
+    -- filetype; a filetype key adds to it and wins on a clash. Empty = nothing is touched.
+    --   win_options = {
+    --       ["*"] = { colorcolumn = "", cursorcolumn = false },  -- no rulers across a document
+    --       markdown = { number = false, relativenumber = false },
+    --   }
+    win_options = {},
     tables_hide_cursor = true, -- hide the hardware cursor while it stands inside a boxed table
     tables_insert_opens_editor = true, -- `i` inside a boxed table opens the editor, not insert
     tables_box_reveal = false, -- a boxed table does NOT reveal on insert (it is edited in the editor)

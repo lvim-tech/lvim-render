@@ -113,6 +113,25 @@ README.md; the reference below explains the options by group.
                   and command-line mode and releases it in insert — the same
                   statement `reveal.modes` makes about the plugin's own
                   decorations.
+`win_options`     ({}) window options this plugin OWNS while a window shows a
+                  rendered buffer, keyed by filetype: `["*"]` applies to every
+                  rendered filetype and a filetype key adds to it (and wins on
+                  a clash). Any window-local option name is accepted: >lua
+                      win_options = {
+                          ["*"] = { colorcolumn = "", cursorcolumn = false },
+                          markdown = { number = false },
+                      }
+<
+                  Same contract as the conceal and fold options: the reader's
+                  values are recorded on attach, re-asserted at the
+                  buffer-reenter seam (Neovim re-initialises window-local
+                  options there), and put back exactly as found when rendering
+                  stops or the buffer detaches — by the names RECORDED, so an
+                  option dropped from the config after it was applied is still
+                  handed back. Empty by default: the plugin renders a
+                  document, it has no opinion about the reader's window
+                  chrome.
+
 `tables_insert_opens_editor`
                   (true) entering insert inside a boxed table opens the table
                   editor (|lvim-render-table-editor|). 'concealcursor' is

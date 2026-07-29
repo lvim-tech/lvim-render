@@ -50,6 +50,25 @@ function M.format_for(ft)
     return nil
 end
 
+--- The window options configured for a buffer's filetype: `["*"]` for every rendered filetype,
+--- with the filetype's own table merged over it. Returns a fresh table, never the config's.
+---@param buf integer
+---@return table<string, any>
+local function configured_options(buf)
+    local conf = config.win_options
+    if type(conf) ~= "table" then
+        return {}
+    end
+    local out = {}
+    for name, value in pairs(conf["*"] or {}) do
+        out[name] = value
+    end
+    for name, value in pairs(conf[vim.bo[buf].filetype] or {}) do
+        out[name] = value
+    end
+    return out
+end
+
 --- Restore a window's saved options, if we own any.
 ---@param win integer
 ---@return nil
@@ -66,6 +85,11 @@ local function restore_win(win)
     local wo = vim.wo[win]
     wo.conceallevel = saved.conceallevel
     wo.concealcursor = saved.concealcursor
+    -- By the names RECORDED, not the ones configured now: an option dropped from the config after
+    -- this window was taken over still has to be handed back as it was found.
+    for name, value in pairs(saved.options or {}) do
+        pcall(api.nvim_set_option_value, name, value, { win = win })
+    end
     if config.fold.enabled and config.fold.headings then
         wo.foldmethod = saved.foldmethod
         wo.foldexpr = saved.foldexpr
@@ -111,6 +135,12 @@ local function assert_win(win)
     else
         wo.conceallevel = config.conceal.level
         wo.concealcursor = config.conceal.cursor
+    end
+    -- The configured window chrome for this filetype, re-asserted here for the same reason the
+    -- conceal options are: window-local values are re-initialised whenever a buffer re-enters a
+    -- window, so a value written once at attach silently reverts.
+    for name, value in pairs(configured_options(api.nvim_win_get_buf(win))) do
+        pcall(api.nvim_set_option_value, name, value, { win = win })
     end
     if config.fold.enabled and config.fold.headings then
         wo.foldmethod = "expr"
@@ -164,6 +194,19 @@ local function apply_win(win, buf)
             conceallevel = wo.conceallevel,
             concealcursor = wo.concealcursor,
         }
+    end
+    if snapshot.options == nil then
+        -- What the reader had, for exactly the options we are about to take over. Recorded once,
+        -- with the window's own values — the split-inherited branch above carries the first
+        -- window's baseline instead, which is what that window really had before us.
+        local before = {}
+        for name in pairs(configured_options(buf)) do
+            local ok, value = pcall(api.nvim_get_option_value, name, { win = win })
+            if ok then
+                before[name] = value
+            end
+        end
+        snapshot.options = before
     end
     state.wins[win] = snapshot
     if st ~= nil and st.baseline == nil then

@@ -86,6 +86,8 @@ M.buffers = {}
 ---@field foldlevel integer
 ---@field conceallevel integer
 ---@field concealcursor string
+---@field options table<string, any>  the reader's values for the options `config.win_options`
+---   asked us to own for this filetype, so they can be handed back exactly as found
 
 ---@type table<integer, LvimRenderWinSaved>  window → what was there before us
 M.wins = {}
