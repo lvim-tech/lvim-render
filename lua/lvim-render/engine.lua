@@ -200,6 +200,18 @@ local function redraw(buf)
     pcall(api.nvim__redraw, { buf = buf, valid = true, flush = false })
 end
 
+--- Ask for a repaint after a WALK transition — entering, stepping, leaving. These change the
+--- HEIGHT of the box's virtual block (the page slides, pagination turns on or off) and may move
+--- the topline in the same tick, so the existing screen lines are NOT valid, and saying they are
+--- (`valid = true`) left a stale duplicated row on screen under key auto-repeat — measured: the
+--- box's bottom border drawn twice, 3/3 profile runs; 0/3 with an honest redraw. Per BUFFER, not
+--- per window: every window showing the buffer draws the same paged box.
+---@param buf integer
+---@return nil
+local function redraw_walk(buf)
+    pcall(api.nvim__redraw, { buf = buf, valid = false, flush = false })
+end
+
 ---@type integer  screen lines revealed when a walk ENTERS a box that does not fit under the
 --- parked row: two borders + the active row — the page follows the active row, so this is all a
 --- visible entry needs. Deliberately minimal: entry must read as "the cursor stopped on the
@@ -481,7 +493,7 @@ function M.attach(buf)
                             below = api.nvim_win_get_height(0) - vim.fn.winline()
                         end
                         act.avail = below
-                        redraw(buf)
+                        redraw_walk(buf)
                         return
                     end
                     -- Stepping past either end hands the cursor back to the buffer, on the first
@@ -492,7 +504,7 @@ function M.attach(buf)
                     local out = delta < 0 and first or (last + 2)
                     api.nvim_win_set_cursor(0, { math.max(1, math.min(out, total)), 0 })
                     sync_box_cursor(buf)
-                    redraw(buf)
+                    redraw_walk(buf)
                     return
                 end
 
@@ -508,7 +520,7 @@ function M.attach(buf)
                         vim.cmd(native)
                     end
                     sync_box_cursor(buf)
-                    redraw(buf)
+                    redraw_walk(buf)
                     return
                 end
 
@@ -570,7 +582,7 @@ function M.attach(buf)
                     -- parks on and it stays put, so CursorMoved never fires and the hardware
                     -- cursor would blink on the anchor. Asked for directly.
                     sync_box_cursor(buf)
-                    redraw(buf)
+                    redraw_walk(buf)
                     return
                 end
 
@@ -753,7 +765,7 @@ function M.on_cursor_moved()
         local row = api.nvim_win_get_cursor(win)[1] - 1
         if row ~= st.box_active.anchor and not (row >= st.box_active.first and row <= st.box_active.last) then
             release_box(st)
-            redraw(buf)
+            redraw_walk(buf)
         end
     end
     sync_box_cursor(buf)
