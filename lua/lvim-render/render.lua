@@ -1961,7 +1961,9 @@ local function emit_table_wrapped(ctx, node, info)
     -- paints its own active row or none is visible at all.
     local bst = state.get(ctx.buf)
     local active = bst ~= nil and bst.box_active or nil
-    local widget_index = (active ~= nil and active.first == sr) and active.index or nil
+    -- Only a WALKING record lights a row: nav mode "stop" parks the same record on the anchor to
+    -- keep `i`/cursor-hiding working, but treats the table as one unit with no active row.
+    local widget_index = (active ~= nil and active.walk and active.first == sr) and active.index or nil
     local cursor = ctx.win == api.nvim_get_current_win() and (api.nvim_win_get_cursor(ctx.win)[1] - 1) or -1
 
     ---@type [string, string][][]
@@ -2018,13 +2020,36 @@ local function emit_table_wrapped(ctx, node, info)
     -- its rows scroll with the buffer like any other virtual lines, so paginating one would do
     -- nothing but cut its last rows off the document (measured — a 34-row table read as ending at
     -- "Nginx"). The window is a navigation aid, not a rendering limit.
-    local budget = math.max(4, (active ~= nil and active.avail) or (api.nvim_win_get_height(ctx.win) - 3))
+    -- The UNPAGINATED height is recorded for the engine: entering a walk only scrolls the view
+    -- when the block genuinely needs more room than the window has under the parked row, and
+    -- that question is answered here, where the block is assembled.
+    if bst ~= nil then
+        bst.box_lines = bst.box_lines or {}
+        bst.box_lines[sr] = #lines
+    end
+
+    local budget = math.max(3, (active ~= nil and active.avail) or (api.nvim_win_get_height(ctx.win) - 3))
     if widget_index ~= nil and #lines > budget then
         local body_first = tconf.box and 2 or 1
         local body_last = tconf.box and (#lines - 1) or #lines
-        local room = budget - (tconf.box and 2 or 0)
-        local centre = active_at or body_first
-        local first = math.max(body_first, math.min(centre - math.floor(room / 2), body_last - room + 1))
+        local room = math.max(1, budget - (tconf.box and 2 or 0))
+        -- THE PAGE FOLLOWS THE ACTIVE ROW the way a viewport follows a cursor: it stands still
+        -- while the row moves inside it and slides by exactly the overshoot when the row would
+        -- leave it. Centring the row instead moved the whole page on every step, and — worse —
+        -- required half a page of room ABOVE the row to show it at all, which is what forced the
+        -- old entry to scroll the reader's window. With the page following, the first row is
+        -- visible the moment one body line is, so entry costs at most a two-line slide.
+        local first = math.max(body_first, math.min(active ~= nil and active.page or body_first, body_last - room + 1))
+        if active_at ~= nil then
+            if active_at < first then
+                first = active_at
+            elseif active_at > first + room - 1 then
+                first = active_at - room + 1
+            end
+        end
+        if active ~= nil then
+            active.page = first
+        end
         ---@type [string, string][][]
         local paged = {}
         if tconf.box then
@@ -3655,33 +3680,6 @@ function M.boxed_span(buf, row)
         end
     end
     return nil
-end
-
---- Is `row` a table SEPARATOR row that a BOX is currently hiding? The box draws its own junction
---- line, so the source's `|---|---|` is a row with nothing of its own on screen — a stop the cursor
---- makes for no reason. Public: the navigation keys ask through here rather than re-deriving it.
----@param buf integer
----@param row integer  0-based
----@return boolean
-function M.is_hidden_separator(buf, row)
-    local st = state.get(buf)
-    if st == nil or st.boxed == nil then
-        return false
-    end
-    local inside = false
-    for first, last in pairs(st.boxed) do
-        if row >= first and row <= last then
-            inside = true
-            break
-        end
-    end
-    if not inside then
-        return false
-    end
-    local line = api.nvim_buf_get_lines(buf, row, row + 1, false)[1]
-    -- `|---|---|` (markdown, with or without alignment colons) and `|---+---|` (org): a row of
-    -- nothing but pipes, dashes, colons and pluses.
-    return line ~= nil and line:match("^%s*|[%s%-:+|]+$") ~= nil
 end
 
 -- ── the walk ─────────────────────────────────────────────────────────────────

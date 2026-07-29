@@ -303,10 +303,11 @@
 ---@field tables_nav_mode "widget"|"stop"|"raw"  how j/k treat a table drawn as a box: walk its rows
 ---   with a plugin-owned index while the cursor parks on the displayed row above it ("widget"),
 ---   treat the whole table as one stop the cursor rests on ("stop"), or leave j/k alone ("raw" —
----   the cursor then walks hidden rows, invisibly, and the view sticks at the window's edge)
----@field tables_nav_keys { down: string|false, up: string|false }  buffer-local motions that step
----   over a table separator row a box is hiding — the only buffer row inside a box that draws
----   nothing of its own
+---   the cursor then lands on hidden rows and Neovim scrolls the whole block into view natively)
+---@field tables_nav_keys { down: string|false, up: string|false }  the buffer-local motions that
+---   implement the nav mode. They PREDICT their landing row (honouring closed folds) and run the
+---   native motion untouched whenever it lands outside a boxed table — the cursor never touches a
+---   hidden row, which is what keeps the view from jumping
 ---@field tables_hide_cursor boolean  hide the hardware cursor while it stands inside a table drawn
 ---   as a box: those rows are hidden, so there is nothing for it to stand on, and the box paints
 ---   its own active row
@@ -426,15 +427,19 @@ local M = {
     --   "widget" (default) — the real cursor parks on the DISPLAYED row above the table and j/k
     --     move a logical row index inside the box, which repaints with that row active. Walking the
     --     table row by row, without ever asking the view to scroll to a zero-height line. Leaving
-    --     either end hands the cursor back to the buffer.
-    --   "stop"   — the table is ONE stop the cursor rests on, like a closed fold; `i` opens the
-    --     editor from there.
-    --   "raw"    — no special handling: j/k walk the hidden rows. The cursor is then invisible
-    --     inside the table and the view will stick when approaching from beyond the window's edge.
+    --     either end hands the cursor back to the buffer. The view never jumps: a box that does
+    --     not fit under the parked row pages inside itself, the page following the active row,
+    --     and each step down slides the view one line — as `j` does at the bottom of a window.
+    --   "stop"   — the table is ONE stop the cursor rests on (the displayed row the box hangs
+    --     from), like a closed fold's line; `i` opens the editor from there and the next `j`
+    --     crosses the table whole.
+    --   "raw"    — no special handling: j/k are Neovim's own, and a cursor landing on a hidden
+    --     row makes Neovim scroll the whole block into view natively.
     tables_nav_mode = "widget",
-    -- j/k inside an attached buffer STEP OVER a table separator row that a box is hiding: the box
-    -- draws its own junction line, so the source's `|---|---|` shows nothing of its own and
-    -- stopping on it is a stop for nothing. Set either to false to leave that key alone.
+    -- The buffer-local motions that implement the mode above. They PREDICT their landing row
+    -- (honouring closed folds) and run the native motion untouched whenever it lands outside a
+    -- boxed table — the cursor never touches a hidden row, which is what keeps the view from
+    -- jumping. Set either to false to leave that key alone.
     tables_nav_keys = { down = "j", up = "k" },
     -- The hardware cursor inside a table drawn as a BOX. Its rows are hidden, so the cursor has
     -- nothing to stand on there and would sit in a blank column while the box paints the active

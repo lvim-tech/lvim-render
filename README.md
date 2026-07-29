@@ -187,7 +187,7 @@ require("lvim-render").setup({
     tables_insert_opens_editor = true, -- `i` inside a boxed table opens the editor, not insert
     tables_box_reveal = false, -- a boxed table does NOT reveal on insert (it is edited in the editor)
     tables_nav_mode = "widget", -- j/k inside a boxed table: "widget" walks its rows | "stop" | "raw"
-    tables_nav_keys = { down = "j", up = "k" }, -- step over a separator row a box hides
+    tables_nav_keys = { down = "j", up = "k" }, -- predict their landing; never touch a hidden row
     tables_editor = { -- the full-screen table editor (`:LvimRender table`)
         title = "󰓫  Table",
         width = 0.9,

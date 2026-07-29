@@ -48,14 +48,21 @@ M.ready = false
 ---   moves on
 ---@field boxed table<integer, integer>|nil  first row → last row of every table currently drawn as
 ---   a BOX. Its rows are hidden, so the hardware cursor has nothing to stand on in them — the
----   engine reads this to hide the cursor while it is inside one
----@field box_active { first: integer, last: integer, anchor: integer, index: integer, rows: integer, avail: integer|nil, scrolloff: integer|nil }|nil
+---   engine reads this to hide the cursor while it is inside one. Dropped (with `box_rows` and
+---   `box_lines`) on every debounced rebuild: the row numbers describe the text as it WAS, and
+---   navigation reading them across an edit walked phantom tables
+---@field box_active { first: integer, last: integer, anchor: integer, index: integer, rows: integer, avail: integer|nil, walk: boolean|nil, page: integer|nil }|nil
 ---   the WIDGET cursor: which row of a boxed table is active while the real cursor is parked on the
 ---   displayed row above it. Neovim has no mapping between a hidden buffer row, a screen row inside
 ---   someone else's `virt_lines`, and a topline — so walking a box is a plugin-owned index, not a
----   cursor position (see `tables_nav_mode`)
+---   cursor position (see `tables_nav_mode`). `avail` is the screen room under the parked row the
+---   pagination may use; the walk grows it one line per step, never by a jump. `walk` true is the
+---   widget; nav mode "stop" parks the same record without it, so no row lights up
 ---@field box_rows table<integer, integer>|nil  first row of a boxed table → how many DATA rows it
 ---   drew, so the widget index knows where the table ends
+---@field box_lines table<integer, integer>|nil  first row of a boxed table → the block's FULL
+---   height in screen lines (before any pagination), so entering a walk can tell whether the box
+---   needs the view scrolled at all
 ---@field fold_drops table<integer, string>|nil  row → the fold level that ENCLOSES it, stated
 ---   where a subtree ends and nothing else would state a lower one (`=` carries the previous
 ---   level, so without this the last fold swallows every row to the end of the buffer)
