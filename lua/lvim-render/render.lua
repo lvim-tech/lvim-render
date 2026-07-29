@@ -1970,6 +1970,8 @@ local function emit_table_wrapped(ctx, node, info)
     local lines = {}
     ---@type integer|nil  which entry of `lines` carries the active row
     local active_at = nil
+    ---@type integer  the last entry of `lines` belonging to the HEADER block (0 when there is none)
+    local head_last = 0
     if tconf.box then
         lines[#lines + 1] =
             border_line(tconf.borders, fit.cols, tconf.borders.top_left, tconf.borders.top_mid, tconf.borders.top_right)
@@ -1997,6 +1999,12 @@ local function emit_table_wrapped(ctx, node, info)
                 tconf.borders.cross,
                 tconf.borders.mid_right
             )
+        end
+        if index == 1 then
+            -- Where the header block ends: its own (possibly wrapped) rows plus the separator.
+            -- The pagination below pins everything up to here, so a paged box never loses the
+            -- one row that says what its columns mean.
+            head_last = #lines
         end
     end
     if tconf.box then
@@ -2028,11 +2036,19 @@ local function emit_table_wrapped(ctx, node, info)
         bst.box_lines[sr] = #lines
     end
 
-    local budget = math.max(3, (active ~= nil and active.avail) or (api.nvim_win_get_height(ctx.win) - 3))
+    local tarea = api.nvim_win_get_height(ctx.win)
+        - (api.nvim_get_option_value("winbar", { win = ctx.win }) ~= "" and 1 or 0)
+    local budget = math.max(3, (active ~= nil and active.avail) or (tarea - 3))
     if widget_index ~= nil and #lines > budget then
-        local body_first = tconf.box and 2 or 1
+        -- THE HEADER IS PINNED, never paged. Paging from the top of the box walked the window
+        -- straight past the header row while keeping the separator under it, so the band read as
+        -- empty — the reader's own report, and the extmark dump showed the row simply absent from
+        -- the emitted lines. A table whose columns are unnamed is unreadable; the header costs a
+        -- couple of rows and buys the whole box its meaning, exactly as a frozen header does.
+        local pinned = math.max(0, head_last - (tconf.box and 1 or 0))
+        local body_first = (tconf.box and 2 or 1) + pinned
         local body_last = tconf.box and (#lines - 1) or #lines
-        local room = math.max(1, budget - (tconf.box and 2 or 0))
+        local room = math.max(1, budget - (tconf.box and 2 or 0) - pinned)
         -- THE PAGE FOLLOWS THE ACTIVE ROW the way a viewport follows a cursor: it stands still
         -- while the row moves inside it and slides by exactly the overshoot when the row would
         -- leave it. Centring the row instead moved the whole page on every step, and — worse —
@@ -2040,7 +2056,8 @@ local function emit_table_wrapped(ctx, node, info)
         -- old entry to scroll the reader's window. With the page following, the first row is
         -- visible the moment one body line is, so entry costs at most a two-line slide.
         local first = math.max(body_first, math.min(active ~= nil and active.page or body_first, body_last - room + 1))
-        if active_at ~= nil then
+        -- An active row INSIDE the pinned header is always on screen, so it never moves the page.
+        if active_at ~= nil and active_at >= body_first then
             if active_at < first then
                 first = active_at
             elseif active_at > first + room - 1 then
@@ -2054,6 +2071,9 @@ local function emit_table_wrapped(ctx, node, info)
         local paged = {}
         if tconf.box then
             paged[#paged + 1] = lines[1]
+        end
+        for i = (tconf.box and 2 or 1), head_last do
+            paged[#paged + 1] = lines[i]
         end
         for i = first, math.min(first + room - 1, body_last) do
             paged[#paged + 1] = lines[i]

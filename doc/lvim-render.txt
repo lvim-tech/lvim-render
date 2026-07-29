@@ -147,7 +147,8 @@ README.md; the reference below explains the options by group.
                   scrolls the whole virtual block into view, so both modes
                   below keep the cursor OFF those rows entirely:
                     "widget"  walk the table row by row. The real cursor parks
-                              on the displayed row above it and a logical index
+                              on the nearest displayed row (above the table
+                              entering from above, below it from below) and an index
                               moves inside the box, which repaints with that
                               row lit; stepping past either end hands the
                               cursor back to the buffer. THE VIEW NEVER JUMPS:
@@ -169,6 +170,14 @@ README.md; the reference below explains the options by group.
                   implement the mode above. They PREDICT their landing row
                   (honouring closed folds) and run the native motion untouched
                   whenever it lands outside a boxed table. Either may be false.
+`tables_nav_wheel` (true) step the mouse wheel over boxed tables through the
+                  plugin's own view model (buffer-local wheel mappings,
+                  honouring 'mousescroll'): Neovim cannot scroll DOWN one line
+                  at a time over a box's hidden rows — a native notch snaps
+                  past the whole table. A block taller than the window is
+                  crossed in one jump (its middle scroll positions are not
+                  expressible). A window under the pointer that is not the
+                  current one keeps the native scroll.
 `tables_editor`   the editor's `title`, `width`, `height`, `border` (eight
                   blank cells by default — no ring; any Neovim border value
                   works) and its own buffer-local `keys` — `commit` (<CR>),

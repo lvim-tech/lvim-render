@@ -305,13 +305,19 @@
 ---   element. False by default: a boxed table is not edited in the buffer — its rows are hidden
 ---   and `:LvimRender table` is where its cells change — so the reveal would only break the view
 ---@field tables_nav_mode "widget"|"stop"|"raw"  how j/k treat a table drawn as a box: walk its rows
----   with a plugin-owned index while the cursor parks on the displayed row above it ("widget"),
+---   with a plugin-owned index while the cursor parks on the nearest displayed row — above the
+---   table entering from above, below it entering from below ("widget"),
 ---   treat the whole table as one stop the cursor rests on ("stop"), or leave j/k alone ("raw" —
 ---   the cursor then lands on hidden rows and Neovim scrolls the whole block into view natively)
 ---@field tables_nav_keys { down: string|false, up: string|false }  the buffer-local motions that
 ---   implement the nav mode. They PREDICT their landing row (honouring closed folds) and run the
 ---   native motion untouched whenever it lands outside a boxed table — the cursor never touches a
 ---   hidden row, which is what keeps the view from jumping
+---@field tables_nav_wheel boolean  step the mouse wheel over boxed tables through the plugin's own
+---   view model (buffer-local <ScrollWheelDown>/<ScrollWheelUp>, honouring 'mousescroll'): Neovim
+---   cannot scroll DOWN one line at a time over a box's hidden rows — a notch snaps past the whole
+---   table (12-20 lines instead of 3, measured). A window under the mouse pointer that is not the
+---   current one gets the native scroll untouched
 ---@field tables_hide_cursor boolean  hide the hardware cursor while it stands inside a table drawn
 ---   as a box: those rows are hidden, so there is nothing for it to stand on, and the box paints
 ---   its own active row
@@ -461,6 +467,11 @@ local M = {
     -- boxed table — the cursor never touches a hidden row, which is what keeps the view from
     -- jumping. Set either to false to leave that key alone.
     tables_nav_keys = { down = "j", up = "k" },
+    -- The mouse wheel over boxed tables, stepped through the plugin's own view model
+    -- (buffer-local wheel mappings, 'mousescroll' rows per notch): Neovim cannot scroll DOWN one
+    -- line at a time over a box's hidden rows — a native notch snaps past the whole table. A
+    -- window under the pointer that is not the current one keeps the native scroll.
+    tables_nav_wheel = true,
     -- The hardware cursor inside a table drawn as a BOX. Its rows are hidden, so the cursor has
     -- nothing to stand on there and would sit in a blank column while the box paints the active
     -- row itself. Hidden through lvim-utils' own cursor registry, never a hand-rolled 'guicursor'.

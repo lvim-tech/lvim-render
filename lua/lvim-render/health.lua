@@ -519,6 +519,10 @@ function M.check()
         end
     end
 
+    if type(config.tables_nav_wheel) ~= "boolean" then
+        health.error("tables_nav_wheel must be a boolean")
+    end
+
     if type(config.completion.priority) ~= "number" then
         health.error("completion.priority must be a number")
     end

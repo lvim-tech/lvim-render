@@ -148,6 +148,23 @@ local function attach_events()
         end,
     })
 
+    -- MITIGATION FOR AN UPSTREAM REDRAW DEFECT: Neovim's incremental scroll tears the grid over
+    -- `conceal_lines` runs carrying `virt_lines` blocks — rows drawn twice, persisting until the
+    -- next repaint (reproduced in `nvim --clean` with manually-set marks and wheel scrolling, no
+    -- plugin code: 4/18 torn captures). A window that just scrolled over boxed-table state asks
+    -- for one honest repaint, so a tear lasts a frame instead of sitting on screen. Remove when
+    -- the upstream redraw is fixed.
+    api.nvim_create_autocmd("WinScrolled", {
+        group = group,
+        callback = function()
+            for key in pairs(vim.v.event) do
+                if key ~= "all" then
+                    engine.on_win_scrolled(tonumber(key) or -1)
+                end
+            end
+        end,
+    })
+
     api.nvim_create_autocmd({ "BufDelete", "BufWipeout" }, {
         group = group,
         callback = function(ev)
