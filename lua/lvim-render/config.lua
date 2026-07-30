@@ -332,8 +332,15 @@
 ---@field math LvimRenderMathConfig  common — math is an element of markdown AND org, not a format
 ---@field highlights table<string, LvimRenderHighlightSpec|LvimRenderHighlightSpec[]>  the shared
 ---   palette mapping — common so every format reads the same H1 the same colour
+---@field floats boolean  attach inside FLOATING windows (LSP hover and friends); off by default
 local M = {
     enabled = true,
+    -- BUFFERS IN A FLOATING WINDOW. An LSP hover, a peek, a documentation popup: Neovim's own
+    -- `vim.lsp.util.open_floating_preview` gives its scratch buffer `filetype = markdown`, so
+    -- without this the renderer decorates a hover the reader expects to look exactly as the editor
+    -- draws it — code fences turned into banded blocks, a language chip over the popup. Off: a
+    -- float belongs to whoever opened it. Turn it on to render inside those popups too.
+    floats = false,
     debounce = 50,
     max_file_size = 2 * 1024 * 1024,
     max_lines = 20000,

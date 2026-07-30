@@ -852,6 +852,28 @@ function M.attach(buf)
     if vim.b[buf].lvim_render_skip then
         return
     end
+    -- A buffer that lives in a FLOAT belongs to whoever opened it (an LSP hover, a peek, a
+    -- documentation popup) — and Neovim's own `open_floating_preview` sets `filetype = markdown`
+    -- on it, so this pattern fires for every hover unless it is refused here. The window is
+    -- already open by the time the filetype is set (measured in the runtime: the window at
+    -- `open_floating_preview` step 84, the filetype at 131), so the test is reliable. A buffer
+    -- shown in ANY ordinary window is still ours — the same document open in a split and peeked
+    -- at renders as it should.
+    if not config.floats then
+        local wins = vim.fn.win_findbuf(buf)
+        if #wins > 0 then
+            local only_float = true
+            for _, win in ipairs(wins) do
+                if (api.nvim_win_get_config(win).relative or "") == "" then
+                    only_float = false
+                    break
+                end
+            end
+            if only_float then
+                return
+            end
+        end
+    end
     if state.get(buf) ~= nil or not api.nvim_buf_is_valid(buf) then
         return
     end
