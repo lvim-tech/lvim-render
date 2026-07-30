@@ -859,7 +859,7 @@ function M.attach(buf)
     -- `open_floating_preview` step 84, the filetype at 131), so the test is reliable. A buffer
     -- shown in ANY ordinary window is still ours — the same document open in a split and peeked
     -- at renders as it should.
-    if not config.floats then
+    if not (config.floats and config.floats.enabled) then
         local wins = vim.fn.win_findbuf(buf)
         if #wins > 0 then
             local only_float = true

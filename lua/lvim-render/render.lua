@@ -913,15 +913,30 @@ local function emit_codeblock(ctx, node)
     -- The block's FIRST row, not the first delimiter's: org writes its opening marker as two
     -- tokens and the order they arrive in is the query's business, not this one's. The opening
     -- fence is the block's first line in every format that has one.
+    -- INSIDE A FLOAT the band is optional (`config.floats.header`): a hover belongs to whoever
+    -- opened it, and a full-width band with a language chip is this plugin's chrome sitting in
+    -- someone else's window. The block keeps everything else — background, padding, injected
+    -- syntax — so the popup still reads as rendered, just not as ours.
+    local floats = config.floats or {}
+    local in_float = ctx.win ~= nil
+        and api.nvim_win_is_valid(ctx.win)
+        and (api.nvim_win_get_config(ctx.win).relative or "") ~= ""
+    local header_ok = cconf.header and not (in_float and floats.header == false)
+
     local header_row = nil
-    if cconf.header and cconf.fences == "show" and delimiters[1] ~= nil then
+    if header_ok and cconf.fences == "show" and delimiters[1] ~= nil then
         header_row = sr
     end
 
     -- THE BODY'S WIDTH. "content" makes the code a BOX — as wide as its longest line plus the
     -- padding on both sides — under a header band that stays full width; "full" reaches the window
     -- edge on every row, which is what a plain band always did.
-    local pad = math.max(0, cconf.pad or 0)
+    -- INSIDE A FLOAT the block is not padded either (`config.floats.header` covers the whole
+    -- band treatment): padding shifts the code two columns the moment the render pass lands, and
+    -- in a popup that opens under the cursor that reads as the content jumping. In an ordinary
+    -- window the block is a page element and the inset is what makes it read as one; in someone
+    -- else's popup it is just their text moving.
+    local pad = header_ok and math.max(0, cconf.pad or 0) or 0
     local box = text_width(ctx)
     local boxed = cconf.band and cconf.width == "content"
     -- The rows are read when EITHER the box needs measuring or the inset needs placing at the end
@@ -1058,10 +1073,19 @@ local function emit_codeblock(ctx, node)
             end
         end
 
+        -- THE LANGUAGE WORD, when no chip will cover it. Normally the chip conceals it and draws
+        -- icon + name in its place; with the band suppressed (a float — see `config.floats`) the
+        -- word would be left sitting alone on an otherwise empty row, which is neither the raw
+        -- fence nor the rendered band. Concealed here so the block simply starts.
+        if not header_ok and lang_node ~= nil then
+            local lsr, lsc, _, lec = lang_node:range()
+            op(ctx, lsr, lsc, { end_col = lec, conceal = "" })
+        end
+
         -- THE CHIP: icon and language in ONE cell, a space on either side, painted in the icon's
         -- own colour on a tinted version of it — so the band says which language this is in the
         -- colour that language already has everywhere else in the editor.
-        if cconf.label and lang ~= nil and icon ~= "" and header_row ~= nil then
+        if header_ok and cconf.label and lang ~= nil and icon ~= "" and header_row ~= nil then
             if lang_node ~= nil then
                 local lsr, lsc, _, lec = lang_node:range()
                 op(ctx, lsr, lsc, { end_col = lec, conceal = "" })
@@ -1093,7 +1117,7 @@ local function emit_codeblock(ctx, node)
     -- markdown query, so a chip there would be invisible (measured); it rides the first CONTENT
     -- row instead, right-aligned. It does not assume it owns that space: other right/eol
     -- virtual text on that row wins or shares by priority, and the chip merely follows.
-    if not cconf.label or content == nil or lang == nil then
+    if not header_ok or not cconf.label or content == nil or lang == nil then
         return
     end
     local csr = content:range()

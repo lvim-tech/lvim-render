@@ -332,15 +332,22 @@
 ---@field math LvimRenderMathConfig  common — math is an element of markdown AND org, not a format
 ---@field highlights table<string, LvimRenderHighlightSpec|LvimRenderHighlightSpec[]>  the shared
 ---   palette mapping — common so every format reads the same H1 the same colour
----@field floats boolean  attach inside FLOATING windows (LSP hover and friends); off by default
+---@field floats { enabled: boolean, header: boolean }  rendering inside FLOATING windows (LSP hover
+---   and friends): whether to render at all, and whether a code block draws its header band there
 local M = {
     enabled = true,
-    -- BUFFERS IN A FLOATING WINDOW. An LSP hover, a peek, a documentation popup: Neovim's own
-    -- `vim.lsp.util.open_floating_preview` gives its scratch buffer `filetype = markdown`, so
-    -- without this the renderer decorates a hover the reader expects to look exactly as the editor
-    -- draws it — code fences turned into banded blocks, a language chip over the popup. Off: a
-    -- float belongs to whoever opened it. Turn it on to render inside those popups too.
-    floats = false,
+    -- BUFFERS IN A FLOATING WINDOW — an LSP hover, a peek, a documentation popup. Neovim's own
+    -- `vim.lsp.util.open_floating_preview` gives its scratch buffer `filetype = markdown`, so the
+    -- renderer reaches those popups whether or not it was meant to.
+    floats = {
+        -- Render there at all. A hover of documentation IS markdown and reads better rendered.
+        enabled = true,
+        -- The code block's HEADER BAND (and its language chip) inside a float. Off: a full-width
+        -- band carrying a chip is chrome, and chrome inside someone else's popup reads as ours
+        -- intruding on theirs — the block itself still gets its background, its padding and its
+        -- injected syntax. Everything else about the block follows the format's own `code` config.
+        header = false,
+    },
     debounce = 50,
     max_file_size = 2 * 1024 * 1024,
     max_lines = 20000,
