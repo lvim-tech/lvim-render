@@ -986,10 +986,10 @@ local function emit_codeblock(ctx, node)
                     -- already paints to the window's edge, and the trailing space is only there so
                     -- a line that reaches the edge does not touch it.
                     local line = body_lines[row - sr + 1] or ""
-                    local fill = boxed and math.max(0, box - pad - fn.strdisplaywidth(line)) or pad
+                    local edge_fill = boxed and math.max(0, box - pad - fn.strdisplaywidth(line)) or pad
                     if #line == 0 then
                         op(ctx, row, 0, {
-                            virt_text = { { string.rep(" ", pad + fill), "LvimRenderCode" } },
+                            virt_text = { { string.rep(" ", pad + edge_fill), "LvimRenderCode" } },
                             virt_text_pos = "inline",
                         })
                     else
@@ -999,9 +999,9 @@ local function emit_codeblock(ctx, node)
                                 virt_text_pos = "inline",
                             })
                         end
-                        if fill > 0 then
+                        if edge_fill > 0 then
                             op(ctx, row, #line, {
-                                virt_text = { { string.rep(" ", fill), "LvimRenderCode" } },
+                                virt_text = { { string.rep(" ", edge_fill), "LvimRenderCode" } },
                                 virt_text_pos = "inline",
                             })
                         end
@@ -1322,15 +1322,15 @@ local function math_tokens(text, base)
     end
     -- Scripts: ^x / _x and ^{x} / _{x} with a SINGLE mappable char; anything longer is the
     -- ceiling and stays raw.
-    for s0, op, ch in text:gmatch("()([%^_])(%w)") do
-        local map = op == "^" and maps.sup or maps.sub
+    for s0, script, ch in text:gmatch("()([%^_])(%w)") do
+        local map = script == "^" and maps.sup or maps.sub
         local repl = map[ch]
         if repl ~= nil then
             out[#out + 1] = { s = base + s0 - 1, e = base + s0 + 1, repl = repl }
         end
     end
-    for s0, op, ch, e0 in text:gmatch("()([%^_]){(%w)}()") do
-        local map = op == "^" and maps.sup or maps.sub
+    for s0, script, ch, e0 in text:gmatch("()([%^_]){(%w)}()") do
+        local map = script == "^" and maps.sup or maps.sub
         local repl = map[ch]
         if repl ~= nil then
             out[#out + 1] = { s = base + s0 - 1, e = base + e0 - 1, repl = repl }
@@ -1356,10 +1356,11 @@ end
 ---@param ichild vim.treesitter.LanguageTree  the inline injection child
 ---@param iq vim.treesitter.Query
 ---@param row integer
----@return { s: integer, e: integer, repl: integer }[] intervals  byte-col ranges, merged
+---@return { s: integer, e: integer, repl: integer, rtext: string? }[] intervals  byte-col
+---   ranges, merged; `rtext` is the replacement text where the range shows one
 ---@return { col: integer, width: integer }[] inserts
 local function row_adjustments(ctx, ichild, iq, row)
-    ---@type { s: integer, e: integer, repl: integer }[]
+    ---@type { s: integer, e: integer, repl: integer, rtext: string? }[]
     local raw = {}
     ---@type { col: integer, width: integer }[]
     local inserts = {}
@@ -1541,7 +1542,7 @@ local function row_adjustments(ctx, ichild, iq, row)
     table.sort(raw, function(a, b)
         return a.s < b.s
     end)
-    ---@type { s: integer, e: integer, repl: integer }[]
+    ---@type { s: integer, e: integer, repl: integer, rtext: string? }[]
     local merged = {}
     for _, iv in ipairs(raw) do
         local last = merged[#merged]
@@ -1983,7 +1984,6 @@ local function emit_table_wrapped(ctx, node, info)
     -- cursor row to read), and otherwise the real cursor's own row — it can still land inside by a
     -- search or a `:N`. Neovim draws no 'cursorline' over virtual lines either way, so the box
     -- paints its own active row or none is visible at all.
-    local bst = state.get(ctx.buf)
     local active = bst ~= nil and bst.box_active or nil
     -- Only a WALKING record lights a row: nav mode "stop" parks the same record on the anchor to
     -- keep `i`/cursor-hiding working, but treats the table as one unit with no active row.
@@ -2363,7 +2363,7 @@ end
 ---@param ctx LvimRenderWalkCtx
 ---@param node TSNode
 local function emit_math(ctx, node)
-    local sr, sc, er, ec = node:range()
+    local sr, _, er = node:range()
     if revealed(ctx, sr, er) then
         return
     end
@@ -2623,7 +2623,7 @@ local function emit_typst_term(ctx, node)
     if tconf == nil or not tconf.enabled then
         return
     end
-    local sr, sc, er = node:range()
+    local sr, _, er = node:range()
     if revealed(ctx, sr, er) then
         return
     end
@@ -2889,7 +2889,7 @@ local function emit_latex_link(ctx, node)
     if lconf == nil or not lconf.enabled then
         return
     end
-    local sr, sc, er, ec = node:range()
+    local sr, _, er, ec = node:range()
     local end_row = ec == 0 and er - 1 or er
     if revealed(ctx, sr, end_row) then
         return
@@ -3495,7 +3495,7 @@ local function emit_row_scans(ctx, row)
     local line = line_at(ctx, row)
 
     if fconf.mark ~= nil and fconf.mark.enabled then
-        for s0, inner, e0 in line:gmatch("()==([^=]+)==()") do
+        for s0, _, e0 in line:gmatch("()==([^=]+)==()") do
             if not protected(ctx, row, s0 - 1, e0 - 1) then
                 op(ctx, row, s0 - 1, { end_col = s0 + 1, conceal = "" })
                 op(ctx, row, e0 - 3, { end_col = e0 - 1, conceal = "" })
@@ -3895,6 +3895,7 @@ function M.collect(win, buf, top, bot)
                 local isr, _, ier = iroot:range()
                 if isr <= ctx.last and ier >= ctx.first then
                     for id, node in iq:iter_captures(iroot, buf, ctx.first, ctx.last + 1) do
+                        ---@type string?
                         local name = iq.captures[id]
                         local nrow = node:range()
                         if ctx.skip_rows[nrow] then

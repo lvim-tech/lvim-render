@@ -43,6 +43,9 @@
 ---@field enabled boolean
 ---@field bullets string[]  the glyph per nesting depth; deeper lists cycle through the list again
 ---@field enum LvimRenderEnumConfig?  formats with an auto-numbered list marker (typst `+`)
+---@field conceal_environment boolean?  LaTeX: hide the `\begin{…}` / `\end{…}` rows of a list
+---@field environments table<string, boolean>?  LaTeX: which environments count as lists, for the
+---   nesting depth and for the concealed delimiter rows
 
 ---@class LvimRenderTermsConfig
 ---@field enabled boolean
@@ -57,6 +60,8 @@
 ---@class LvimRenderEmphasisConfig
 ---@field enabled boolean  conceal the `*`/`_`/`~~` delimiters; the styling itself is the
 ---   treesitter groups' job
+---@field commands table<string, string>?  LaTeX: command → the style its argument is drawn in
+---   (`\textbf` → "bold"); a command not named here is left exactly as written
 
 ---@class LvimRenderInlineCodeConfig
 ---@field enabled boolean
@@ -165,6 +170,8 @@
 ---@field info string      the count chunk, drawn in the level's STRONG tint: `{count}` is the
 ---   number of hidden lines
 ---@field position "right"|"left"  which end of the collapsed row the count box sits at
+---@field count_tint number  blend of the level's accent toward the background for the count box
+---   (and for the whole fold line while the cursor is on it)
 
 ---@class LvimRenderFoldKeysConfig
 ---@field cycle string|false      buffer-local key cycling the heading under the cursor through
@@ -223,12 +230,15 @@
 ---@class LvimRenderFormatConfig
 ---@field enabled boolean      this format renders at all
 ---@field filetypes string[]   buffers that carry it
+---@field language string?     THE GRAMMAR'S NAME, when it is not the filetype's (latex); absent
+---   where the filetype already names the parser
 ---@field headings LvimRenderHeadingsConfig
 ---@field lists LvimRenderListsConfig
 ---@field rule LvimRenderRuleConfig?  absent where the format has no horizontal rule (typst)
 ---@field terms LvimRenderTermsConfig?  typst `/ Term: description`
 ---@field labels { enabled: boolean, icon: string, conceal: boolean }?  typst `<name>`
 ---@field refs { enabled: boolean, icon: string }?  typst `@name`
+---@field citations { enabled: boolean, icon: string }?  LaTeX `\cite{key}`
 ---@field emphasis LvimRenderEmphasisConfig?
 ---@field escapes { enabled: boolean }?
 ---@field mark { enabled: boolean }?
@@ -260,6 +270,8 @@
 ---@field inline { enabled: boolean, maps: table }  `$…$` → unicode substitution
 ---@field block { enabled: boolean, label: string, band: boolean, maps: table }
 ---@field image LvimRenderMathImageConfig
+---@field typst_aliases table<string, string>  typst symbol name → the LaTeX command carrying the
+---   same glyph, so the shared LaTeX-keyed maps answer for typst too
 
 ---@class LvimRenderSplitConfig
 ---@field position "right"|"left"  which side the preview opens on

@@ -17,6 +17,8 @@ M.ready = false
 ---@field title string    the heading text without its markers, for the foldtext
 ---@field end_row integer 0-based EXCLUSIVE end of the heading's subtree (the next heading of the
 ---   same or higher level, or the end of the buffer)
+---@field node_end integer|nil  a CEILING for `end_row` when the grammar knows the subtree's own
+---   end (LaTeX sections nest what follows the command); nil where it does not
 ---@field setext boolean  a two-line setext heading (the underline row is row + 1)
 
 ---@class LvimRenderBufState

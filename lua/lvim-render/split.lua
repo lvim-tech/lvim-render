@@ -330,7 +330,6 @@ function M.open(buf)
     if config.split.quiet_source and vim.lsp.codelens.is_enabled({ bufnr = buf }) then
         splits[buf].lens_off = true
         pcall(vim.lsp.codelens.enable, false, { bufnr = buf })
-        pcall(vim.lsp.codelens.clear, nil, buf)
     end
 
     if config.split.focus == "source" then

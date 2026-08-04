@@ -161,7 +161,7 @@ function M.check()
     -- missing one is invisible: the buffer attaches, the plugin runs, and every query silently
     -- compiles against a language that does not exist.
     for _, format in ipairs(state.ready and engine.formats or {}) do
-        local fconf = config[format]
+        local fconf = config[format] --[[@as LvimRenderFormatConfig]]
         if type(fconf) == "table" and fconf.enabled and type(fconf.language) == "string" then
             local mapped = true
             for _, ft in ipairs(fconf.filetypes or {}) do

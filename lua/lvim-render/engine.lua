@@ -103,7 +103,9 @@ local function restore_win(win)
             -- unrecoverable the moment expr took over, so every fold present here is ours to
             -- remove; eliminating them completes the restore.
             api.nvim_win_call(win, function()
-                pcall(vim.cmd, "normal! zE")
+                pcall(function()
+                    vim.cmd("normal! zE")
+                end)
             end)
         end
     end
@@ -170,6 +172,19 @@ local function apply_win(win, buf)
     end
     local st = state.get(buf)
     local wo = vim.wo[win]
+    -- What the reader had, for exactly the options we are about to take over — the window's own
+    -- values. Only the fresh branch below needs them: the split-inherited one carries the first
+    -- window's baseline instead, which is what that window really had before us.
+    local function reader_options()
+        local before = {}
+        for name in pairs(configured_options(buf)) do
+            local ok, value = pcall(api.nvim_get_option_value, name, { win = win })
+            if ok then
+                before[name] = value
+            end
+        end
+        return before
+    end
     ---@type LvimRenderWinSaved
     local snapshot
     if
@@ -193,20 +208,8 @@ local function apply_win(win, buf)
             foldlevel = wo.foldlevel,
             conceallevel = wo.conceallevel,
             concealcursor = wo.concealcursor,
+            options = reader_options(),
         }
-    end
-    if snapshot.options == nil then
-        -- What the reader had, for exactly the options we are about to take over. Recorded once,
-        -- with the window's own values — the split-inherited branch above carries the first
-        -- window's baseline instead, which is what that window really had before us.
-        local before = {}
-        for name in pairs(configured_options(buf)) do
-            local ok, value = pcall(api.nvim_get_option_value, name, { win = win })
-            if ok then
-                before[name] = value
-            end
-        end
-        snapshot.options = before
     end
     state.wins[win] = snapshot
     if st ~= nil and st.baseline == nil then
@@ -472,11 +475,6 @@ end
 --- owner's report). The lane is reconciled synchronously FIRST (`M.sync_inline`) so the
 --- full-height block is already the mark any fill counts against, and the whole landing is ONE
 --- full-dict `winrestview`.
----@param buf integer
----@param st LvimRenderBufState
----@param first integer  0-based first source row of the table
----@param last integer  0-based last source row of the table
----@return nil
 -- FORWARD DECLARATION. The two view steppers are defined below, next to the display-unit model
 -- they belong to, but the box EXITS above them step through that same model — a local is only in
 -- scope after its definition, so calling one from here without this reads as a global and is nil
@@ -485,6 +483,11 @@ end
 ---@type fun(st: LvimRenderBufState, buf: integer, view: { topline: integer, topfill: integer }, cap: integer, budget: integer): { topline: integer, topfill: integer }
 local view_step_up
 
+---@param buf integer
+---@param st LvimRenderBufState
+---@param first integer  0-based first source row of the table
+---@param last integer  0-based last source row of the table
+---@return nil
 local function exit_box_below(buf, st, first, last)
     -- Read the layout BEFORE anything moves. The height is the TEXT area: `nvim_win_get_height`
     -- counts the winbar row, `winline()` does not, and one row too deep violates 'scrolloff' —
@@ -563,11 +566,10 @@ end
 
 --- The displayed line at or before `l` — the mirror of `next_displayed`: a line inside a boxed
 --- run resolves to that box's ANCHOR line (always displayed; boxes on row 0 are refused).
----@param st LvimRenderBufState
 ---@param buf integer
 ---@param l integer  1-based line
 ---@return integer
-local function prev_displayed(st, buf, l)
+local function prev_displayed(buf, l)
     local span = render.boxed_span(buf, l - 1)
     if span ~= nil then
         return math.max(span.first, 1)
@@ -619,10 +621,11 @@ local function exit_box_above(buf, st, first, last)
             -- every displayed line from the top down to the line before it.
             local above = v2.topfill
             if v2.topline <= anchor_line - 1 then
-                above = above + api.nvim_win_text_height(0, {
-                    start_row = v2.topline - 1,
-                    end_row = anchor_line - 2,
-                }).all
+                above = above
+                    + api.nvim_win_text_height(0, {
+                        start_row = v2.topline - 1,
+                        end_row = anchor_line - 2,
+                    }).all
             elseif v2.topline > anchor_line then
                 above = -1 -- the anchor is above the top edge: keep climbing
             end
@@ -724,7 +727,7 @@ function view_step_up(st, buf, view, cap, budget)
         local tl = span ~= nil and math.max(span.first, 1) or math.max(view.topline - 1, 1)
         local acc = 1 -- the anchor's own text row; its block stays below the window edge
         while tl > 1 do
-            local p = prev_displayed(st, buf, tl - 1)
+            local p = prev_displayed(buf, tl - 1)
             local hh = display_cost(st, p)
             if acc + hh > budget or p >= tl then
                 break
@@ -766,7 +769,9 @@ local function wheel_scroll(buf, delta)
         -- swallow every notch (measured: the view froze while notches went into a float).
         if api.nvim_win_get_config(mp.winid).relative == "" then
             api.nvim_win_call(mp.winid, function()
-                pcall(vim.cmd, native)
+                pcall(function()
+                    vim.cmd(native)
+                end)
             end)
             return
         end
@@ -894,7 +899,7 @@ function M.attach(buf)
     lang = lang or vim.treesitter.language.get_lang(ft) or ft
 
     ---@type LvimRenderBufState
-    local st = {
+    local new_st = {
         enabled = config.enabled,
         inert = nil,
         format = format,
@@ -914,7 +919,7 @@ function M.attach(buf)
     local lines = api.nvim_buf_line_count(buf)
     local bytes = api.nvim_buf_get_offset(buf, lines)
     if lines > config.max_lines or (bytes >= 0 and bytes > config.max_file_size) then
-        st.inert = ("size gate: %d lines / %d bytes (max_lines = %d, max_file_size = %d)"):format(
+        new_st.inert = ("size gate: %d lines / %d bytes (max_lines = %d, max_file_size = %d)"):format(
             lines,
             bytes,
             config.max_lines,
@@ -925,19 +930,19 @@ function M.attach(buf)
             vim.log.levels.INFO
         )
     elseif not pcall(vim.treesitter.get_parser, buf, lang) then
-        st.inert = ("no parser for %q"):format(lang)
+        new_st.inert = ("no parser for %q"):format(lang)
     end
 
-    state.buffers[buf] = st
-    if st.inert ~= nil then
+    state.buffers[buf] = new_st
+    if new_st.inert ~= nil then
         return
     end
 
-    st.timer = uv.new_timer()
+    new_st.timer = uv.new_timer()
     -- A highlighter attached before setup() amended the query still carries the old one.
     queries.refresh_highlighter(buf, lang)
     fold.rebuild(buf)
-    if st.enabled then
+    if new_st.enabled then
         sync_wins(buf, true)
     end
 
@@ -1051,7 +1056,7 @@ function M.attach(buf)
                                     if anchor_line < vim.fn.line("w0") then
                                         tl, tf = anchor_line, 0
                                         for _ = 1, so2 do
-                                            tl = prev_displayed(st, buf, math.max(tl - 1, 1))
+                                            tl = prev_displayed(buf, math.max(tl - 1, 1))
                                         end
                                     end
                                     vim.fn.winrestview({
@@ -1254,7 +1259,7 @@ function M.attach(buf)
                                 topline = target
                                 local acc = line_rows(target)
                                 while topline > out do
-                                    local p = prev_displayed(st, buf, topline - 1)
+                                    local p = prev_displayed(buf, topline - 1)
                                     local hh = display_cost(st, p)
                                     if acc + hh > budget or p >= topline then
                                         break
@@ -1390,7 +1395,6 @@ function M.attach(buf)
                         -- the whole run (the in-walk slide's measured 15-line lump).
                         local view = vim.fn.winsaveview()
                         local stepped = { topline = view.topline, topfill = view.topfill }
-                        local total = api.nvim_buf_line_count(buf)
                         local h = text_height(0)
                         for _ = 1, shift do
                             stepped = view_step_down(st, buf, stepped, total, math.max(h - 1 - so, 1))
@@ -1802,7 +1806,7 @@ end
 --- icon and a link icon; two links) that must be told apart.
 ---@param row integer
 ---@param col integer
----@param opts vim.api.keyset.set_extmark
+---@param opts vim.api.keyset.set_extmark|vim.api.keyset.extmark_details
 ---@return string
 local function inline_key(row, col, opts)
     local parts = { tostring(row), tostring(col) }
@@ -1845,7 +1849,7 @@ local function reconcile_inline(buf, top, bot, wanted, dry)
         { details = true, overlap = false }
     )
     local changed = false
-    ---@type table<string, true>  keys the buffer already carries
+    ---@type table<string, integer>  key → the extmark ID the buffer already carries
     local present = {}
     for _, mark in ipairs(have) do
         local key = inline_key(mark[2], mark[3], mark[4])
