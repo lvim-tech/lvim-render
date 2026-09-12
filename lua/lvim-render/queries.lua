@@ -18,7 +18,11 @@ local M = {}
 ---@class LvimRenderQueryState
 ---@field mode "show"|"hide"  the applied fences mode
 ---@field stripped integer    how many conceal_lines directives were removed
----@field original string     the untouched resolved source, for restoring "hide"
+---@field original string|nil the untouched resolved source, for restoring "hide"; nil when the
+---   language has no highlights query on the runtimepath at all (see `missing`)
+---@field missing boolean|nil no highlights query was found for the language — its grammar and
+---   queries are not installed — so there was nothing to own. Recorded rather than skipped, so
+---   health can tell that apart from "setup() never ran"
 
 ---@type table<string, LvimRenderQueryState>  language → override state
 M.state = {}
@@ -66,14 +70,20 @@ function M.apply(lang, mode)
     end
     if mode == "hide" then
         -- Back to what the runtime path resolves on its own.
-        if current ~= nil then
+        if current ~= nil and current.original ~= nil then
             pcall(vim.treesitter.query.set, lang, "highlights", current.original)
-            M.state[lang] = { mode = "hide", stripped = 0, original = current.original }
+        end
+        if current ~= nil then
+            M.state[lang] = { mode = "hide", stripped = 0, original = current.original, missing = current.missing }
         end
         return
     end
     local source = current ~= nil and current.original or resolved_source(lang, "highlights")
     if source == nil then
+        -- NO QUERY AT ALL: the language's grammar and queries are not on the runtimepath (typst
+        -- and org come through lvim-ts / lvim-pkg, and are simply not installed yet). Nothing to
+        -- own — recorded as such, so health does not read "never resolved" as a setup-order fault.
+        M.state[lang] = { mode = "show", stripped = 0, original = nil, missing = true }
         return
     end
     local overridden, stripped = M.strip_fence_conceals(source)

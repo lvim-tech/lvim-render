@@ -739,7 +739,16 @@ function M.check()
             end
             if fconf.code.fences == "show" then
                 local qs = queries.state[format]
-                if qs ~= nil and qs.mode == "show" and qs.stripped > 0 then
+                if qs ~= nil and qs.missing then
+                    -- Not a setup-order fault: there is no highlights query for this language on
+                    -- the runtimepath (its grammar and queries are not installed), so nothing
+                    -- could be owned — the format section above names the missing grammar.
+                    health.info(
+                        ('%s.code.fences = "show": no highlights query for this language on the runtimepath — nothing to own until its grammar and queries are installed'):format(
+                            format
+                        )
+                    )
+                elseif qs ~= nil and qs.mode == "show" and qs.stripped > 0 then
                     health.ok(
                         ('%s.code.fences = "show": %d conceal_lines directive(s) stripped from the highlight query'):format(
                             format,
