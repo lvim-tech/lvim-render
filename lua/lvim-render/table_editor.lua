@@ -38,7 +38,7 @@ local M = {}
 ---@field format string    the format block the table came from
 ---@field header boolean   the first row is a header (markdown always; org when it has an `hr`)
 
----@type table<integer, { grid: LvimRenderTableGrid, source: integer, buf: integer, handle: table }>
+---@type table<integer, { grid: LvimRenderTableGrid, source: integer, buf: integer, handle: table, tick: integer }>
 --- editor buffer → what it is editing
 local open_editors = {}
 
@@ -233,6 +233,17 @@ local function commit(ed)
     end
     local grid = harvest(ed, rec.grid)
     if api.nvim_buf_is_valid(rec.source) and vim.bo[rec.source].modifiable then
+        -- `grid.first/last` are the rows the table occupied when the editor OPENED. The float is
+        -- modal in practice, but nothing stops an autocmd, a formatter or another window from
+        -- editing the source meanwhile — then those rows are someone else's text. Refuse rather
+        -- than overwrite; the editor stays open so nothing typed is lost.
+        if api.nvim_buf_get_changedtick(rec.source) ~= rec.tick then
+            vim.notify(
+                "lvim-render: the source buffer changed while the table editor was open — not writing it back (close and reopen the editor)",
+                vim.log.levels.WARN
+            )
+            return
+        end
         api.nvim_buf_set_lines(rec.source, grid.first, grid.last + 1, false, M.format(grid))
     end
     if rec.handle ~= nil and rec.handle.close ~= nil then
@@ -553,7 +564,7 @@ function M.open(buf)
             open_editors[ed] = nil
         end,
     })
-    open_editors[ed] = { grid = grid, source = buf, buf = ed, handle = handle }
+    open_editors[ed] = { grid = grid, source = buf, buf = ed, handle = handle, tick = api.nvim_buf_get_changedtick(buf) }
     -- The surface may leave the panel in insert (its editable field does); a grid is navigated
     -- before it is typed into, so the editor always arrives in NORMAL mode.
     vim.schedule(function()
