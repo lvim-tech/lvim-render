@@ -102,19 +102,24 @@ local function command(action, scope)
     set_buffer(api.nvim_get_current_buf(), action)
 end
 
---- Wire the provider and the lifecycle autocmds. Once.
+--- (Re)create the FileType autocmd from the CURRENT config. Its own cleared group, so a repeat
+--- setup() that changed `filetypes` rewrites the pattern instead of keeping the first call's.
 ---@return nil
-local function attach_events()
-    engine.start()
-    local group = api.nvim_create_augroup("LvimRender", { clear = true })
-
+local function attach_filetype()
     api.nvim_create_autocmd("FileType", {
-        group = group,
+        group = api.nvim_create_augroup("LvimRenderFileType", { clear = true }),
         pattern = attach_patterns(),
         callback = function(ev)
             engine.attach(ev.buf)
         end,
     })
+end
+
+--- Wire the provider and the lifecycle autocmds. Once.
+---@return nil
+local function attach_events()
+    engine.start()
+    local group = api.nvim_create_augroup("LvimRender", { clear = true })
 
     -- A window starts showing an attached buffer: own its options; stops: give them back.
     api.nvim_create_autocmd("BufWinEnter", {
@@ -297,7 +302,9 @@ function M.setup(opts)
         })
     end
 
-    -- A repeat setup() may have changed formats or filetypes: sweep what is already open.
+    -- A repeat setup() may have changed formats or filetypes: rewrite the FileType pattern and
+    -- sweep what is already open.
+    attach_filetype()
     for _, buf in ipairs(api.nvim_list_bufs()) do
         if api.nvim_buf_is_loaded(buf) and state.get(buf) == nil then
             local ft = vim.bo[buf].filetype
