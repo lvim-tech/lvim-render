@@ -1591,15 +1591,18 @@ local function span_text(line, scol, ecol, intervals, inserts)
             col = math.min(hit.e, ecol)
         else
             -- One CHARACTER at a time, not one byte: a Cyrillic or CJK character is several bytes
-            -- and slicing it in half would produce mojibake in the box.
-            local nxt = vim.str_utfindex(line, "utf-8", col, false)
-            local step = vim.str_byteindex(line, "utf-8", nxt + 1, false) - col
+            -- and slicing it in half would produce mojibake in the box. The index is taken in
+            -- utf-32 (a character count) — in "utf-8" it is a byte count and the step is always one
+            -- byte, which only worked because the pieces were concatenated straight back.
+            local nxt = vim.str_utfindex(line, "utf-32", col, false)
+            local step = vim.str_byteindex(line, "utf-32", nxt + 1, false) - col
             out[#out + 1] = line:sub(col + 1, col + math.max(step, 1))
             col = col + math.max(step, 1)
         end
     end
     return table.concat(out)
 end
+M._span_text = span_text
 
 --- Split `text` into lines no wider than `width` display cells, breaking at spaces where it can
 --- and mid-word only when a single word does not fit at all. Returns at least one line.
