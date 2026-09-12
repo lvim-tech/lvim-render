@@ -145,7 +145,7 @@ generation-cancelled: a superseded rebuild never paints stale decorations.
 
 ## Requirements
 
-- Neovim 0.11+
+- Neovim 0.12+
 - [lvim-utils](https://github.com/lvim-tech/lvim-utils) (config merge + palette-bound highlights)
 - The treesitter parser of each format you use — `markdown` (+ `markdown_inline`), `typst`,
   `org` (resolved and installed through

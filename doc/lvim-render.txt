@@ -51,7 +51,7 @@ and latex (see `latex` under |lvim-render-config-markdown|) render;
 ==============================================================================
 2. REQUIREMENTS                                     *lvim-render-requirements*
 
-- Neovim 0.11 or newer (decoration providers, treesitter range parsing)
+- Neovim 0.12 or newer (decoration providers, treesitter range parsing)
 - lvim-utils (option merge and the shared colour palette)
 - the treesitter parser of each format you use — `markdown` (with
   `markdown_inline`), `typst` and `org`. The org grammar is NOT in the

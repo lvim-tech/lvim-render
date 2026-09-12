@@ -77,10 +77,10 @@ end
 function M.check()
     health.start("lvim-render")
 
-    if fn.has("nvim-0.11") == 1 then
+    if fn.has("nvim-0.12") == 1 then
         health.ok("Neovim " .. tostring(vim.version()))
     else
-        health.error("Neovim 0.11 or newer is required (decoration providers, treesitter range parsing)")
+        health.error("Neovim 0.12 or newer is required (the lvim-* ecosystem baseline; decoration providers, treesitter range parsing)")
     end
 
     if pcall(require, "lvim-utils.utils") then
