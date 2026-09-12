@@ -173,6 +173,9 @@ FORMAT owns lives in its own block (`markdown`, `org`, `typst`, `latex`).
 ```lua
 require("lvim-render").setup({
     enabled = true, -- master switch (the global side of :LvimRender)
+    -- Buffers shown in a FLOATING window (an LSP hover gets `filetype = markdown`): render there at
+    -- all, and whether a code block draws its full-width header band inside someone else's popup.
+    floats = { enabled = true, header = false },
     debounce = 50, -- ms of idle before a reparse + outline rebuild after an edit
     max_file_size = 2 * 1024 * 1024, -- bytes; a bigger buffer attaches inert
     max_lines = 20000, -- lines; same gate
@@ -203,6 +206,7 @@ require("lvim-render").setup({
         width = 0.9,
         height = 0.8,
         border = { " ", " ", " ", " ", " ", " ", " ", " " }, -- no ring; any Neovim border works
+        table_mode = true, -- lvim-table's table mode in the editor's buffer, when that sibling is installed
         keys = {
             commit = "<CR>", -- write the table back, reformatted, and close
             next_cell = "<Tab>",
@@ -213,6 +217,7 @@ require("lvim-render").setup({
             column_delete = "<C-x>",
             realign = "<C-a>",
             cancel = "q", -- close without writing anything back
+            help = "g?", -- the cheatsheet
         },
     },
     split = { -- the side-by-side preview (:LvimRender split) — a mirror buffer, see below
@@ -355,8 +360,8 @@ require("lvim-render").setup({
             },
         },
     },
-    -- The org renderer lands with its phase; the config surface is fixed now. Until then org
-    -- buffers do not attach and health says why.
+    -- Org: the same pipeline over org's own grammar (see "Org" above). The grammar is registered
+    -- with lvim-pkg by setup(); until it is installed an org buffer attaches inert and health says why.
     org = {
         enabled = true,
         filetypes = { "org" },
@@ -403,8 +408,12 @@ require("lvim-render").setup({
             label = true,
             icon = "󰅩",
             fences = "show",
-            position = "left",
-            icon_color = "accent",
+            position = "right",
+            icon_color = "devicon",
+            header = true,
+            air = 1,
+            pad = 2,
+            width = "full",
         },
         -- `#+begin_quote` … `#+end_quote`: the border rides the CONTENT rows, not the markers.
         quotes = { enabled = true, border = "▍", repeat_on_wrap = false },
@@ -543,9 +552,9 @@ require("lvim-render").setup({
         -- LaTeX's rule is a command, not a block element; the block stays for shape parity.
         rule = { enabled = false, glyph = "─", icon = "◆" },
     },
-    -- Math is common, not a format: `$…$` / `$$…$$` appear inside markdown and org alike. The
-    -- unicode substitution lands at its phase; `image` is the experimental kitty tier — the only
-    -- part of the plugin that spawns processes, and off until asked for.
+    -- Math is common, not a format: `$…$` / `$$…$$` appear inside markdown and org alike, and
+    -- typst and LaTeX formulas run through the same table. `image` is the experimental kitty
+    -- tier — the only part of the plugin that would spawn processes, and off until asked for.
     math = {
         -- Typst spells the same symbols differently (`infinity`, `arrow.r`); the shared table is
         -- keyed by LaTeX commands, so these map a typst name onto the command that carries the
@@ -660,11 +669,12 @@ otherwise un-conceal that single row underneath the box.
 | Key | |
 | --- | --- |
 | `<CR>` | write the table back, reformatted, and close |
-| `q` / `<Esc>` | cancel |
+| `q` | cancel (normal mode only — `<Esc>` keeps leaving insert, as it should in a buffer you type into) |
 | `<Tab>` / `<S-Tab>` | next / previous cell |
 | `<C-r>` / `<C-d>` | add / delete a row |
 | `<C-c>` / `<C-x>` | add / delete a column |
 | `<C-a>` | re-align after an edit widened a cell |
+| `g?` | the cheatsheet |
 
 All of them are `tables_editor.keys`. The key that OPENS the editor is deliberately not taken —
 that one belongs in your own keymap; the command is the seam.

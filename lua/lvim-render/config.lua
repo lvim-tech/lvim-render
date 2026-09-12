@@ -691,9 +691,9 @@ local M = {
             },
         },
     },
-    -- The org renderer lands with its phase (it waits on the org grammar reaching lvim-pkg); the
-    -- config surface is fixed NOW so nothing moves later. Until then org buffers attach inert and
-    -- health says why.
+    -- Org: the same pipeline over org's own grammar. The grammar is not in the community parser
+    -- catalogue — `setup()` registers it with lvim-pkg — and until it is installed an org buffer
+    -- attaches inert and health says why.
     org = {
         enabled = true,
         filetypes = { "org" },
@@ -772,7 +772,7 @@ local M = {
         -- treatment markdown gives frontmatter — metadata, present but visually quiet.
         frontmatter = { enabled = true },
     },
-    -- Typst: same shape, renderer lands at its phase (the grammar is already in the registry).
+    -- Typst: the same pipeline over typst's own grammar (one tree carries block and inline alike).
     typst = {
         enabled = true,
         filetypes = { "typst" },
@@ -937,9 +937,10 @@ local M = {
             icon = "◆",
         },
     },
-    -- Math is COMMON, not a format: `$…$` / `$$…$$` appear inside markdown and org alike. The
-    -- unicode substitution lands at its phase; `image` is the experimental kitty tier — the only
-    -- part of the plugin that spawns processes, and off until asked for.
+    -- Math is COMMON, not a format: `$…$` / `$$…$$` appear inside markdown and org alike, and the
+    -- typst and LaTeX formulas run through the same shared symbol table (lvim-tex's conceal data).
+    -- `image` is the experimental kitty tier — the only part of the plugin that would spawn
+    -- processes, and off until asked for.
     math = {
         -- TYPST SPELLS THE SAME SYMBOLS DIFFERENTLY. The shared table is keyed by LaTeX commands
         -- (`\\infty`), and typst writes `infinity`, `oo`, `arrow.r`, `eq.not` — names that never

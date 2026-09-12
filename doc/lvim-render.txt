@@ -44,9 +44,9 @@ key.
 The text in the file never changes. Turn the plugin off and the buffer — and
 the window's fold and conceal options — are exactly as they were.
 
-markdown, typst (|lvim-render-typst-render|) and org (|lvim-render-org-render|)
-render today. The `latex` block is the fixed surface its renderer fills in a
-later phase; |:checkhealth| reports each format's status.
+markdown, typst (|lvim-render-typst-render|), org (|lvim-render-org-render|)
+and latex (see `latex` under |lvim-render-config-markdown|) render;
+|:checkhealth| reports each format's status.
 
 ==============================================================================
 2. REQUIREMENTS                                     *lvim-render-requirements*
@@ -223,12 +223,13 @@ README.md; the reference below explains the options by group.
                   cursor is ON the line the band rises to the box's tint, so
                   the two become one solid tint of the level's accent.
 `tables.wrap_cells`
-                  (FALSE by default) under 'wrap', fit the box to the window:
+                  (TRUE by default) under 'wrap', fit the box to the window:
                   the columns shrink and every cell is split across as many
                   lines as it needs, so the table never spills across
-                  continuation rows.
-                  OFF by default because of what it costs, measured rather
-                  than guessed. The box must be ONE block of virtual lines
+                  continuation rows — under 'wrap' it is the only thing that
+                  works (concealed text still takes its width when a line
+                  wraps). What it costs, measured rather than guessed: the
+                  box must be ONE block of virtual lines
                   hanging off the row above the table — a range conceal hides
                   a line's characters but NOT its screen rows, and virtual
                   lines do not draw on a `conceal_lines` row. That block can
@@ -465,13 +466,18 @@ drawn line on. It carries `checkboxes`, `quotes`, `code`, `links`,
 `inline_code`, `emphasis` and `frontmatter` (the drawers and `#+…:` directives)
 alongside the common heading and list blocks.
 
-`latex` is OFF by default: standalone .tex buffers belong to lvim-tex, and
-enabling both is a double-decoration risk the user must opt into knowingly.
+`latex` is ON by default (`latex.enabled`), for the `tex`, `latex` and
+`plaintex` filetypes — see the `latex` entry under
+|lvim-render-config-markdown|. lvim-tex's own conceal (off by default there)
+draws the same source; enabling both is a double-decoration the user opts into
+knowingly, so `latex.enabled = false` here is the switch when lvim-tex's
+conceal is preferred.
 
 `math` is common rather than a format — math appears inside markdown, typst
-and org alike (each with its own delimiters). Its `inline`/`block` unicode substitution lands at
-its phase; `math.image` is the experimental kitty tier (off by default; the
-only part of the plugin that would spawn processes).
+and org alike (each with its own delimiters). Its `inline`/`block` unicode
+substitution runs through the shared symbol table (see `math` above);
+`math.image` is the experimental kitty tier (off by default; the only part of
+the plugin that would spawn processes).
 
 ------------------------------------------------------------------------------
 4.5 COLOURS                                       *lvim-render-config-colours*
@@ -721,11 +727,12 @@ there fights your settings. Entering insert inside a boxed table opens it too
 row underneath the box, editable and detached from its table.
 
     <CR>              write the table back, reformatted, and close
-    q / <Esc>         cancel
+    q                 cancel (normal mode only — <Esc> keeps leaving insert)
     <Tab> / <S-Tab>   next / previous cell
     <C-r> / <C-d>     add / delete a row
     <C-c> / <C-x>     add / delete a column
     <C-a>             re-align after an edit widened a cell
+    g?                the cheatsheet
 
 All of them are `tables_editor.keys`. The key that OPENS the editor is
 deliberately not taken: that one belongs in your own keymap.
