@@ -180,7 +180,7 @@ end
 
 --- Rendering state of a buffer, for a statusline or a fixture.
 ---@param buf integer?  defaults to the current buffer
----@return { attached: boolean, enabled: boolean, inert: string|nil, format: string|nil }
+---@return { attached: boolean, enabled: boolean, inert: string|nil, format: string|nil, mirror: boolean|nil, split: boolean|nil }
 function M.status(buf)
     buf = bufnr(buf)
     local st = state.get(buf)
