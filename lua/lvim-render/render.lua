@@ -1950,7 +1950,11 @@ local function emit_table_wrapped(ctx, node, info)
         record(nil)
         return false
     end
-    -- No row above to hang from: this shape cannot draw there, so the ordinary rendering takes it.
+    -- No row above to hang from: this shape cannot draw there. Under 'nowrap' the ordinary
+    -- in-place rendering then takes the table (the caller only skips it while a `fit` layout
+    -- exists, which is a wrapping window). Under 'wrap' there is no alternative and the table is
+    -- left as its own plain text -- the same all-or-nothing rule as a box that cannot fit, see the
+    -- caller. So a table written on the FIRST line of a wrapping document renders unstyled.
     if sr == 0 then
         record(nil)
         return false
