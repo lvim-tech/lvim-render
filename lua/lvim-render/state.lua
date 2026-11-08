@@ -62,6 +62,9 @@ M.ready = false
 ---   plugin-owned index, not a cursor position (see `tables_nav_mode`). `avail` is the block rows
 ---   the pagination may draw; `walk` true is the widget; nav mode "stop" parks the same record
 ---   without it, so no row lights up
+---@field box_start table<integer, integer>|nil  first hidden row of a boxed table → the table's
+---   first source row. They differ when the box hangs on the table's own first row
+---@field box_paged boolean|nil  the last cursor move repainted a box paged around the cursor
 ---@field box_rows table<integer, integer>|nil  first row of a boxed table → how many DATA rows it
 ---   drew, so the widget index knows where the table ends
 ---@field box_lines table<integer, integer>|nil  first row of a boxed table → the block's FULL

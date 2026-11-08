@@ -224,20 +224,29 @@ README.md; the reference below explains the options by group.
                   the two become one solid tint of the level's accent.
 `tables.wrap_cells`
                   (TRUE by default) under 'wrap', fit the box to the window:
-                  the columns shrink and every cell is split across as many
-                  lines as it needs, so the table never spills across
+                  the columns shrink, whatever the natural width (`max_width`
+                  does not limit it), and every cell is split across as many
+                  lines as it needs. Later lines of a row use the
+                  `borders.continuation` glyph; when rows wrap, each body row
+                  with another below it ends underlined. So the table never spills across
                   continuation rows — under 'wrap' it is the only thing that
                   works (concealed text still takes its width when a line
                   wraps). What it costs, measured rather than guessed: the
-                  box must be ONE block of virtual lines
-                  hanging off the row above the table — a range conceal hides
-                  a line's characters but NOT its screen rows, and virtual
-                  lines do not draw on a `conceal_lines` row. That block can
-                  only be drawn while the WHOLE table is on screen, so it pops
-                  in and out as you scroll past it; scrolling THROUGH it is
-                  one jump rather than line by line; and a table taller than
-                  the window gets nothing at all. For documents of small
-                  tables none of that bites. The row the cursor is on is
+                  box must be ONE block of virtual lines hanging off the row
+                  above the table — a range conceal hides a line's characters
+                  but NOT its screen rows, and virtual lines do not draw on a
+                  `conceal_lines` row. Where that row cannot carry it (the
+                  file's first line, a table right above, a hidden fence, a
+                  closed fold in the current window) the box hangs off the
+                  table's own first row, which reads as a blank line, wrapped
+                  by its raw length. Neovim shows only the tail of a block
+                  taller than the window, so such a box is paged while you
+                  walk it or the cursor stands on it. Each window has its own
+                  marks and draws at its own width. Styled text keeps its
+                  highlight; a quote keeps its border and a list its indent. A
+                  table too wide even at `min_col` is cut at the window's edge
+                  under `borders.overflow`, columns at most `overflow_col`.
+                  The row the cursor is on is
                   painted with the editor's own CursorLine background while
                   the box is up, since Neovim draws no 'cursorline' over
                   virtual lines.
@@ -424,16 +433,13 @@ text inside the band — readable and honest, never mangled.
                       `---:`). `box` draws the top/bottom border lines,
                       `head` bands the header row, `borders` names every
                       glyph. THE RULE: the box is all-or-nothing per table —
-                      beyond `max_rows`, `max_width`, or the window's text
-                      width, the WHOLE table degrades to styled pipes and a
+                      beyond `max_rows`, or under 'nowrap' beyond `max_width`
+                      or the window's text width, the WHOLE table degrades to styled pipes and a
                       drawn delimiter aligned to the text as written; a
                       silently broken box is never an outcome. The analysis
                       is cached per edit; scrolling costs a screen, not the
                       table. Editing inside a table reveals it WHOLE.
-                      Limitation: a table on the FIRST line of the file has
-                      no room for its top border (Neovim draws no virtual
-                      lines above the window's top line); the rest of the
-                      box draws. Aligning the RAW source's pipes is editing,
+                      Aligning the RAW source's pipes is editing,
                       not decoration — that is lvim-table's table mode;
                       lvim-render boxes whatever the source says.
 `markdown.callouts`   `types`: { key, icon, label } entries, matched
@@ -903,6 +909,7 @@ measuring pass). They are recorded as open items rather than half-implemented.
     LvimRenderQuote1 .. QuoteN        quote borders per nesting depth
     LvimRenderCheckbox1 .. CheckboxN  one per configured checkbox state
     LvimRenderTableBorder             the table box glyphs
+    LvimRenderTableRowEnd             the underline ending a wrapped table's row
     LvimRenderTableHead               the header row band
     LvimRenderMath                    the block-math band (background-only)
     LvimRenderMathLabel               the block-math label

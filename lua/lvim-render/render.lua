@@ -42,6 +42,65 @@ M.ns = api.nvim_create_namespace("LvimRender")
 --- reconciles these against the marks actually in the buffer.
 M.ns_inline = api.nvim_create_namespace("LvimRenderInline")
 
+---@type table<integer, integer>  window → its own persistent lane
+local win_lanes = {}
+---@type integer[]  lanes of closed windows, waiting for the next window
+local free_lanes = {}
+---@type integer  how many lanes were ever created, to name the next one
+local lane_count = 0
+
+--- The persistent lane of one window. The marks of this lane are layout, and layout belongs to a
+--- window: a box fitted to a 40-column window is cut off in an 80-column one, and a window under
+--- 'nowrap' wants no box at all. A namespace limited to one window holds `virt_lines` and
+--- `conceal_lines` for that window only (measured), so two windows on one buffer stop fighting
+--- over one set of marks. Falls back to the shared lane where the API is missing.
+---@param win integer
+---@return integer ns
+function M.win_ns(win)
+    local ns = win_lanes[win]
+    if ns ~= nil then
+        return ns
+    end
+    if api.nvim__ns_set == nil then
+        return M.ns_inline
+    end
+    ns = table.remove(free_lanes)
+    if ns == nil then
+        lane_count = lane_count + 1
+        ns = api.nvim_create_namespace("LvimRenderInline." .. lane_count)
+    end
+    api.nvim__ns_set(ns, { wins = { win } })
+    win_lanes[win] = ns
+    return ns
+end
+
+--- Remove the persistent marks of `buf` from every window's lane.
+---@param buf integer
+---@return nil
+function M.clear_lanes(buf)
+    api.nvim_buf_clear_namespace(buf, M.ns_inline, 0, -1)
+    for _, ns in pairs(win_lanes) do
+        api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+    end
+end
+
+--- A window closed: its marks go from every buffer and the lane waits for the next window.
+---@param win integer
+---@return nil
+function M.free_win_ns(win)
+    local ns = win_lanes[win]
+    if ns == nil then
+        return
+    end
+    win_lanes[win] = nil
+    for _, buf in ipairs(api.nvim_list_bufs()) do
+        if api.nvim_buf_is_loaded(buf) then
+            api.nvim_buf_clear_namespace(buf, ns, 0, -1)
+        end
+    end
+    free_lanes[#free_lanes + 1] = ns
+end
+
 ---@type integer  rows of slack around every windowed range: the widest multi-row element is
 --- still walked (and redrawn) whole when it straddles a boundary. Grows with the widest element
 --- a phase ships (setext heading = 2 rows today; code blocks/quotes are handled per row).
@@ -1340,6 +1399,14 @@ local function math_tokens(text, base)
 end
 
 -- ── tables ───────────────────────────────────────────────────────────────────
+
+---@type table<string, string>  an emphasis node → what the box paints it with: the groups the
+--- runtime's own highlight query gives the same text in the buffer
+local EMPHASIS_HL = {
+    emphasis = "@markup.italic",
+    strong_emphasis = "@markup.strong",
+    strikethrough = "@markup.strikethrough",
+}
 --
 -- THE WIDTH TRAP, addressed head on: by paint time the inline layer has already concealed link
 -- syntax, turned backticks into padding and inserted icons — a column measured on RAW text is
@@ -1359,11 +1426,17 @@ end
 ---@return { s: integer, e: integer, repl: integer, rtext: string? }[] intervals  byte-col
 ---   ranges, merged; `rtext` is the replacement text where the range shows one
 ---@return { col: integer, width: integer }[] inserts
+---@return integer[] code_pipes  byte columns of the backslash of every `\\|` inside a code span
+---@return { s: integer, e: integer, hl: string }[] styles  what the box paints each span with
 local function row_adjustments(ctx, ichild, iq, row)
     ---@type { s: integer, e: integer, repl: integer, rtext: string? }[]
     local raw = {}
     ---@type { col: integer, width: integer }[]
     local inserts = {}
+    ---@type integer[]
+    local code_pipes = {}
+    ---@type { s: integer, e: integer, hl: string }[]
+    local styles = {}
     local fconf = ctx.fconf
 
     -- Every inline tree touching the row: table cells are separate injection regions, and a
@@ -1384,6 +1457,20 @@ local function row_adjustments(ctx, ichild, iq, row)
             local sr, sc, er, ec = node:range()
             if sr == row and er == row then
                 if name == "code" and fconf.inline_code ~= nil and fconf.inline_code.enabled then
+                    styles[#styles + 1] = { s = sc, e = ec, hl = "LvimRenderCodeInline" }
+                    -- GFM unescapes `\|` inside a table's code span: the pipe needs the backslash to
+                    -- stay in the cell, and the reader sees the pipe alone.
+                    local code_line = line_at(ctx, row)
+                    local from = sc + 1
+                    while true do
+                        local at = code_line:find("\\|", from, true)
+                        if at == nil or at >= ec then
+                            break
+                        end
+                        code_pipes[#code_pipes + 1] = at - 1
+                        raw[#raw + 1] = { s = at - 1, e = at, repl = 0 }
+                        from = at + 2
+                    end
                     for child in node:iter_children() do
                         if child:type() == "code_span_delimiter" then
                             local _, dc, _, dec = child:range()
@@ -1396,6 +1483,10 @@ local function row_adjustments(ctx, ichild, iq, row)
                         end
                     end
                 elseif name == "emphasis" and fconf.emphasis ~= nil and fconf.emphasis.enabled then
+                    local emphasis_hl = EMPHASIS_HL[node:type()]
+                    if emphasis_hl ~= nil then
+                        styles[#styles + 1] = { s = sc, e = ec, hl = emphasis_hl }
+                    end
                     for child in node:iter_children() do
                         if child:type() == "emphasis_delimiter" then
                             local _, dc, _, dec = child:range()
@@ -1417,6 +1508,9 @@ local function row_adjustments(ctx, ichild, iq, row)
                     end
                     if label ~= nil then
                         local _, lsc, _, lec = label:range()
+                        if name ~= "link_shortcut" then
+                            styles[#styles + 1] = { s = sc, e = ec, hl = "LvimRenderLink" }
+                        end
                         -- Shortcut "links" (`[word]` — checkboxes, callout tokens, plain brackets)
                         -- get NO ops of ours, but the RUNTIME query conceals their brackets, so the
                         -- width arithmetic must count them all the same.
@@ -1524,6 +1618,7 @@ local function row_adjustments(ctx, ichild, iq, row)
         if fconf.mark ~= nil and fconf.mark.enabled then
             for s0, _, e0 in line:gmatch("()==([^=]+)==()") do
                 if not scan_protected(s0 - 1, e0 - 1) then
+                    styles[#styles + 1] = { s = s0 - 1, e = e0 - 1, hl = "LvimRenderMark" }
                     raw[#raw + 1] = { s = s0 - 1, e = s0 + 1, repl = 0 }
                     raw[#raw + 1] = { s = e0 - 3, e = e0 - 1, repl = 0 }
                 end
@@ -1556,7 +1651,7 @@ local function row_adjustments(ctx, ichild, iq, row)
             merged[#merged + 1] = { s = iv.s, e = iv.e, repl = iv.repl, rtext = iv.rtext }
         end
     end
-    return merged, inserts
+    return merged, inserts, code_pipes, styles
 end
 
 --- The rendered TEXT of one single-row span: the source with every concealed interval replaced by
@@ -1568,11 +1663,36 @@ end
 ---@param ecol integer  0-based byte end (exclusive)
 ---@param intervals { s: integer, e: integer, repl: integer, rtext: string? }[]
 ---@param inserts { col: integer, width: integer, text: string? }[]
----@return string
-local function span_text(line, scol, ecol, intervals, inserts)
+---@param styles { s: integer, e: integer, hl: string }[]|nil
+---@return string text
+---@return table<integer, string>|nil paint  1-based character of `text` → its highlight
+local function span_text(line, scol, ecol, intervals, inserts, styles)
     ---@type string[]
     local out = {}
     local col = scol
+    ---@type table<integer, string>|nil
+    local paint = nil
+    local count = 0
+    --- Append a piece of rendered text, painted with the style the source column falls under.
+    ---@param piece string
+    ---@param at integer  the source byte column it stands for
+    local function put(piece, at)
+        out[#out + 1] = piece
+        local chars = fn.strchars(piece)
+        local hl = nil
+        for _, style in ipairs(styles or {}) do
+            if at >= style.s and at < style.e then
+                hl = style.hl
+            end
+        end
+        if hl ~= nil then
+            paint = paint or {}
+            for i = count + 1, count + chars do
+                paint[i] = hl
+            end
+        end
+        count = count + chars
+    end
     while col < ecol do
         local hit = nil
         for _, iv in ipairs(intervals) do
@@ -1583,11 +1703,11 @@ local function span_text(line, scol, ecol, intervals, inserts)
         end
         for _, ins in ipairs(inserts) do
             if ins.col == col and ins.text ~= nil then
-                out[#out + 1] = ins.text
+                put(ins.text, col)
             end
         end
         if hit ~= nil then
-            out[#out + 1] = hit.rtext or ""
+            put(hit.rtext or "", col)
             col = math.min(hit.e, ecol)
         else
             -- One CHARACTER at a time, not one byte: a Cyrillic or CJK character is several bytes
@@ -1596,11 +1716,11 @@ local function span_text(line, scol, ecol, intervals, inserts)
             -- byte, which only worked because the pieces were concatenated straight back.
             local nxt = vim.str_utfindex(line, "utf-32", col, false)
             local step = vim.str_byteindex(line, "utf-32", nxt + 1, false) - col
-            out[#out + 1] = line:sub(col + 1, col + math.max(step, 1))
+            put(line:sub(col + 1, col + math.max(step, 1)), col)
             col = col + math.max(step, 1)
         end
     end
-    return table.concat(out)
+    return table.concat(out), paint
 end
 M._span_text = span_text
 
@@ -1608,20 +1728,31 @@ M._span_text = span_text
 --- and mid-word only when a single word does not fit at all. Returns at least one line.
 ---@param text string
 ---@param width integer
----@return string[]
-local function wrap_text(text, width)
+---@param track boolean|nil  also say where each piece of a line came from in `text`
+---@return string[] lines
+---@return { at: integer, src: integer, len: integer }[][]|nil places  per line, its pieces: `at` is
+---   the 0-based character in the line, `src` the 1-based character in `text`
+local function wrap_text(text, width, track)
     if width < 1 then
         return { text }
     end
     ---@type string[]
     local lines, current = {}, ""
+    ---@type { at: integer, src: integer, len: integer }[][]
+    local places, pieces = {}, {}
     local function flush()
         lines[#lines + 1] = current
-        current = ""
+        places[#lines] = pieces
+        current, pieces = "", {}
     end
-    for word in text:gmatch("%S+") do
+    for start, word in text:gmatch("()(%S+)") do
+        local src = track and (fn.strchars(text:sub(1, start - 1)) + 1) or 0
         local candidate = current == "" and word or (current .. " " .. word)
         if fn.strdisplaywidth(candidate) <= width then
+            if track then
+                local at = current == "" and 0 or (fn.strchars(current) + 1)
+                pieces[#pieces + 1] = { at = at, src = src, len = fn.strchars(word) }
+            end
             current = candidate
         else
             if current ~= "" then
@@ -1634,16 +1765,24 @@ local function wrap_text(text, width)
                 while take > 0 and fn.strdisplaywidth(fn.strcharpart(word, 0, take)) > width do
                     take = take - 1
                 end
-                lines[#lines + 1] = fn.strcharpart(word, 0, take)
+                current = fn.strcharpart(word, 0, take)
+                if track then
+                    pieces[#pieces + 1] = { at = 0, src = src, len = take }
+                    src = src + take
+                end
+                flush()
                 word = fn.strcharpart(word, take)
             end
             current = word
+            if track then
+                pieces[#pieces + 1] = { at = 0, src = src, len = fn.strchars(word) }
+            end
         end
     end
     if current ~= "" or #lines == 0 then
         flush()
     end
-    return lines
+    return lines, track and places or nil
 end
 
 --- Rendered display width of one single-row span, given its row's adjustments.
@@ -1700,7 +1839,7 @@ end
 ---@param info LvimRenderTableInfo
 ---@param avail integer
 ---@param tconf LvimRenderTablesConfig
----@return { cols: integer[], rows: table<integer, string[][]>, total: integer }|nil
+---@return LvimRenderTableFit|nil
 local function fit_layout(info, avail, tconf)
     local cols = {}
     for i, w in ipairs(info.cols) do
@@ -1717,6 +1856,7 @@ local function fit_layout(info, avail, tconf)
         )
     end
     local total = box_width()
+    local overflow = false
     while total > avail do
         local widest, at = 0, nil
         for i, w in ipairs(cols) do
@@ -1724,10 +1864,18 @@ local function fit_layout(info, avail, tconf)
                 widest, at = w, i
             end
         end
-        -- Every column is already at the floor: the window is too narrow for a box at all, and
-        -- the caller falls back to the degraded form rather than drawing a broken one.
+        -- Every column is at the floor and the box still does not fit: no shrinking can seat this
+        -- table. Pipes in the source line would be torn apart by 'wrap', so it stays a box, with
+        -- columns wide enough to read, cut at the window's edge under a visible marker. The
+        -- columns past the edge are in the editor (`:LvimRender table`).
         if at == nil or widest <= tconf.min_col then
-            return nil
+            overflow = true
+            local readable = math.max(tconf.overflow_col or 12, tconf.min_col)
+            for i, w in ipairs(info.cols) do
+                cols[i] = math.min(w, readable)
+            end
+            total = box_width()
+            break
         end
         cols[at] = cols[at] - 1
         total = box_width()
@@ -1735,31 +1883,45 @@ local function fit_layout(info, avail, tconf)
 
     ---@type table<integer, string[][]>
     local rows = {}
+    ---@type table<integer, table>
+    local places = {}
     for offset, texts in pairs(info.text) do
         local cells = {}
+        local row_places = {}
+        local paints = info.paint[offset] or {}
         for i = 1, #cols do
-            cells[i] = wrap_text(texts[i] or "", cols[i])
+            cells[i], row_places[i] = wrap_text(texts[i] or "", cols[i], paints[i] ~= nil)
         end
         rows[offset] = cells
+        places[offset] = row_places
     end
-    return { cols = cols, rows = rows, total = total }
+    return { cols = cols, rows = rows, places = places, total = total, overflow = overflow, avail = avail }
 end
 
 ---@class LvimRenderTableInfo
 ---@field gen integer
----@field degraded boolean
+---@field degraded boolean       too many rows to measure: no box and no padding, in any window
 ---@field cols integer[]           column widths (rendered cells, the widest wins)
 ---@field aligns ("left"|"center"|"right")[]
 ---@field cells table<integer, integer[]>  row offset from table start → that row's cell widths
 ---@field total integer            the assembled box width
 ---@field text table<integer, string[]>  row offset → that row's RENDERED cell texts, kept only
 ---   when the box may have to be re-laid out narrower (the wrapped mode below)
----@field fit { cols: integer[], rows: table<integer, string[][]>, total: integer }|nil  the
----   WRAPPED layout: columns shrunk to the window and each cell split across as many lines as it
----   needs. Present only when the natural box does not fit and the window wraps
----@field fit_width integer|nil   the available width `fit` was computed FOR. The analysis proper
----   is window-independent and cached per edit; this one is not — it is recomputed whenever the
----   text area's width differs from the value it was built for
+---@field paint table<integer, table<integer, table<integer, string>>>  row offset → column → that
+---   cell's character → its highlight; absent for a cell with no styled text
+---@field code_pipes table<integer, integer[]>  row offset → the backslash of each `\\|` in a code span
+---@field fits table<integer, LvimRenderTableFit>  window → the WRAPPED layout: columns shrunk to the
+---   window and each cell split across as many lines as it needs. The analysis proper is
+---   window-independent and cached per edit; this one is not, and is rebuilt when the text area's
+---   width differs from the one it was computed for
+
+---@class LvimRenderTableFit
+---@field cols integer[]
+---@field rows table<integer, string[][]>  row offset → column → that cell's lines
+---@field places table<integer, table>  row offset → column → where each line's pieces came from
+---@field total integer
+---@field overflow boolean  the box is wider than the window and is cut at its edge
+---@field avail integer  the width this layout was computed for
 
 --- Analyse a table: every cell's RENDERED width, column maxima, alignment. Cached per buffer
 --- generation — the full scan runs once per edit, not once per redraw (the 200×10 benchmark's
@@ -1781,8 +1943,18 @@ local function analyze_table(ctx, node, ichild, iq)
     end
 
     ---@type LvimRenderTableInfo
-    local info =
-        { gen = st and st.generation or 0, degraded = false, cols = {}, aligns = {}, cells = {}, text = {}, total = 0 }
+    local info = {
+        gen = st and st.generation or 0,
+        degraded = false,
+        cols = {},
+        aligns = {},
+        cells = {},
+        text = {},
+        paint = {},
+        code_pipes = {},
+        fits = {},
+        total = 0,
+    }
 
     ---@type TSNode[]
     local row_nodes = {}
@@ -1814,10 +1986,12 @@ local function analyze_table(ctx, node, ichild, iq)
         for _, row_node in ipairs(row_nodes) do
             local row = row_node:range()
             local line = line_at(ctx, row)
-            local intervals, inserts = {}, {}
+            local intervals, inserts, code_pipes, styles = {}, {}, {}, {}
             if ichild ~= nil and iq ~= nil then
-                intervals, inserts = row_adjustments(ctx, ichild, iq, row)
+                intervals, inserts, code_pipes, styles = row_adjustments(ctx, ichild, iq, row)
             end
+            info.code_pipes[row - sr] = code_pipes
+            local paints = {}
             local widths, texts = {}, {}
             local col_index = 0
             for cell in row_node:iter_children() do
@@ -1831,12 +2005,14 @@ local function analyze_table(ctx, node, ichild, iq)
                     local content_len = #(cell_text:gsub("%s+$", ""))
                     local w = span_width(line, sc, sc + content_len, intervals, inserts)
                     widths[col_index] = w
-                    texts[col_index] = span_text(line, sc, sc + content_len, intervals, inserts)
+                    texts[col_index], paints[col_index] =
+                        span_text(line, sc, sc + content_len, intervals, inserts, styles)
                     info.cols[col_index] = math.max(info.cols[col_index] or tconf.min_col, w)
                 end
             end
             info.cells[row - sr] = widths
             info.text[row - sr] = texts
+            info.paint[row - sr] = paints
         end
         if delimiter ~= nil then
             local col_index = 0
@@ -1856,12 +2032,13 @@ local function analyze_table(ctx, node, ichild, iq)
                 end
             end
         end
+        -- `max_width` is NOT applied here. It limits the in-place drawing, where the natural width
+        -- is what appears on screen; a fitted box is as wide as the window whatever the cells
+        -- measure, so the same limit would refuse the one layout a long cell needs (measured: 288
+        -- of 1248 real tables fell to unaligned pipes that 'wrap' then tore apart).
         info.total = 1
         for _, w in ipairs(info.cols) do
             info.total = info.total + 1 + w + 1
-        end
-        if info.total > tconf.max_width then
-            info.degraded = true
         end
     end
 
@@ -1872,15 +2049,18 @@ local function analyze_table(ctx, node, ichild, iq)
 end
 
 --- One row of the wrapped box: `│ cell │ cell │`, every cell padded to its column and aligned.
----@param fit { cols: integer[], rows: table<integer, string[][]>, total: integer }
+---@param fit LvimRenderTableFit
 ---@param borders LvimRenderTableBorders
 ---@param cells string[][]  per column, its wrapped lines
 ---@param line integer      which wrapped line to draw (1 = the first)
 ---@param aligns ("left"|"center"|"right")[]
 ---@param body_hl string    the highlight for the cell TEXT (the header row differs)
 ---@param cursor boolean?   this is the row the cursor is on — paint it like the cursor line
----@return [string, string][]
-local function wrapped_row(fit, borders, cells, line, aligns, body_hl, cursor)
+---@param row_end boolean?  the last line of a table row that another row follows: underline it
+---@param paints table<integer, table<integer, string>>|nil  column → character → highlight
+---@param places table|nil  column → line → the pieces of that line
+---@return [string, string|string[]][]
+local function wrapped_row(fit, borders, cells, line, aligns, body_hl, cursor, row_end, paints, places)
     -- The BORDERS are never tinted — the mark lives in the CELLS, exactly like the header band
     -- does. A highlight drawn across the whole row would paint over the box's own glyphs and the
     -- table would lose its frame on whichever row you happen to be on.
@@ -1891,17 +2071,179 @@ local function wrapped_row(fit, borders, cells, line, aligns, body_hl, cursor)
         -- no colour of its own, so there the cursor line IS the mark.
         body_hl = body_hl == "LvimRenderTableHead" and "LvimRenderTableHeadCursor" or "LvimRenderTableCursor"
     end
-    ---@type [string, string][]
-    local chunks = { { borders.vertical, border_hl } }
+    -- A wrapped cell's lines look like rows of their own, and an empty cell beside them says
+    -- nothing. So the lines of one table row are joined by the continuation glyph, and the row's
+    -- end is marked in the cells. Both are stacked on the row's own highlight, not swapped for it.
+    local vertical = line > 1 and (borders.continuation or borders.vertical) or borders.vertical
+    ---@type string|string[]
+    local cell_hl = row_end and { body_hl, "LvimRenderTableRowEnd" } or body_hl
+    --- The row's own highlight with a text style stacked on top.
+    ---@param style string
+    ---@return string[]
+    local function styled(style)
+        return row_end and { body_hl, "LvimRenderTableRowEnd", style } or { body_hl, style }
+    end
+    ---@type [string, string|string[]][]
+    local chunks = { { vertical, border_hl } }
     for i, width in ipairs(fit.cols) do
         local text = (cells[i] or {})[line] or ""
         local slack = width - fn.strdisplaywidth(text)
         local align = aligns[i] or "left"
         local head = align == "right" and slack or align == "center" and math.floor(slack / 2) or 0
-        chunks[#chunks + 1] = { " " .. string.rep(" ", head) .. text .. string.rep(" ", slack - head) .. " ", body_hl }
-        chunks[#chunks + 1] = { borders.vertical, border_hl }
+        local paint = paints and paints[i] or nil
+        local pieces = paint and places and places[i] and places[i][line] or nil
+        if pieces == nil then
+            chunks[#chunks + 1] =
+                { " " .. string.rep(" ", head) .. text .. string.rep(" ", slack - head) .. " ", cell_hl }
+        else
+            chunks[#chunks + 1] = { " " .. string.rep(" ", head), cell_hl }
+            local chars = fn.split(text, [[\zs]])
+            ---@type table<integer, string>  0-based character of this line → its style
+            local line_paint = {}
+            for _, piece in ipairs(pieces) do
+                for j = 0, piece.len - 1 do
+                    line_paint[piece.at + j] = paint[piece.src + j]
+                end
+            end
+            local run, run_hl = {}, nil
+            local function flush_run()
+                if #run > 0 then
+                    chunks[#chunks + 1] = { table.concat(run), run_hl and styled(run_hl) or cell_hl }
+                end
+                run = {}
+            end
+            for c, char in ipairs(chars) do
+                local hl = line_paint[c - 1]
+                -- The space a wrap put between two words of one span belongs to that span.
+                if hl == nil and char == " " and line_paint[c - 2] == line_paint[c] then
+                    hl = line_paint[c]
+                end
+                if hl ~= run_hl then
+                    flush_run()
+                    run_hl = hl
+                end
+                run[#run + 1] = char
+            end
+            flush_run()
+            chunks[#chunks + 1] = { string.rep(" ", slack - head) .. " ", cell_hl }
+        end
+        chunks[#chunks + 1] = { vertical, border_hl }
     end
     return chunks
+end
+
+--- This window no longer draws the table at `sr` as a box. The navigation reads the record, so a
+--- stale one sends j/k through rows that are on screen; a walk over it ends with it. Only the
+--- current window's drawing is recorded, because the navigation only ever runs there.
+---@param ctx LvimRenderWalkCtx
+---@param sr integer
+---@param keep integer|nil  the first hidden row this table is being drawn with now
+---@return nil
+local function forget_box(ctx, sr, keep)
+    local st = state.get(ctx.buf)
+    if st == nil or ctx.win ~= api.nvim_get_current_win() or st.boxed == nil then
+        return
+    end
+    for _, first in ipairs({ sr, sr + 1 }) do
+        if first ~= keep and st.box_start ~= nil and st.box_start[first] == sr then
+            st.boxed[first] = nil
+            st.box_start[first] = nil
+            if st.box_active ~= nil and st.box_active.first == first then
+                st.box_active = nil
+            end
+        end
+    end
+end
+
+--- Can the row above this table carry its box? Virtual lines do not draw on a row that is hidden,
+--- so the answer is no for a row that does not exist, for the last row of a table right above
+--- (hidden by its own box), for a code fence under `fences = "hide"` and, in the current window,
+--- for a row inside a closed fold the table is not part of. The answer was a table with no box
+--- and hidden rows: nothing on screen at all.
+---@param ctx LvimRenderWalkCtx
+---@param node TSNode
+---@param sr integer
+---@return boolean
+local function anchor_is_own_row(ctx, node, sr)
+    if sr == 0 then
+        return true
+    end
+    local prev = node:prev_named_sibling()
+    if prev ~= nil then
+        local _, _, per, pec = prev:range()
+        if (pec == 0 and per - 1 or per) == sr - 1 then
+            local kind = prev:type()
+            if kind == "pipe_table" then
+                return true
+            end
+            local code = ctx.fconf.code
+            if kind == "fenced_code_block" and code ~= nil and code.fences == "hide" then
+                return true
+            end
+        end
+    end
+    if ctx.win == api.nvim_get_current_win() then
+        return fn.foldclosed(sr) ~= -1 and fn.foldclosed(sr + 1) == -1
+    end
+    return false
+end
+
+--- What stands before the box in a block quote or a list item: the quote's border per `>`, spaces
+--- for the indent. The box hides the rows that drew them.
+---@param ctx LvimRenderWalkCtx
+---@param node TSNode
+---@return [string, string][]
+local function table_prefix(ctx, node)
+    local sr, sc = node:range()
+    if sc == 0 then
+        return {}
+    end
+    local qconf = ctx.fconf.quotes
+    local glyph = qconf ~= nil and qconf.enabled and qconf.border ~= "" and qconf.border or nil
+    local head = line_at(ctx, sr):sub(1, sc)
+    ---@type [string, string][]
+    local chunks = {}
+    local depth = 0
+    for i = 1, #head do
+        local c = head:sub(i, i)
+        if c == ">" then
+            depth = depth + 1
+            chunks[#chunks + 1] = { glyph or ">", highlights.quote_group(depth) }
+        else
+            chunks[#chunks + 1] = { " ", "Normal" }
+        end
+    end
+    return chunks
+end
+
+--- Cut one virtual line at `avail` cells, ending it with `marker`. Past the window's edge Neovim
+--- would drop the rest without a word, and a table that loses columns has to say so.
+---@param chunks [string, string|string[]][]
+---@param avail integer
+---@param marker string
+---@return [string, string|string[]][]
+local function clip_chunks(chunks, avail, marker)
+    local room = avail - fn.strdisplaywidth(marker)
+    ---@type [string, string|string[]][]
+    local out = {}
+    for _, chunk in ipairs(chunks) do
+        local width = fn.strdisplaywidth(chunk[1])
+        if width <= room then
+            out[#out + 1] = chunk
+            room = room - width
+        else
+            local take = room
+            while take > 0 and fn.strdisplaywidth(fn.strcharpart(chunk[1], 0, take)) > room do
+                take = take - 1
+            end
+            if take > 0 then
+                out[#out + 1] = { fn.strcharpart(chunk[1], 0, take), chunk[2] }
+            end
+            out[#out + 1] = { marker, "LvimRenderTableBorder" }
+            return out
+        end
+    end
+    return out
 end
 
 --- Draw the table with its columns shrunk to the window and its cells wrapped. Returns false when
@@ -1926,8 +2268,9 @@ end
 ---@param ctx LvimRenderWalkCtx
 ---@param node TSNode
 ---@param info LvimRenderTableInfo
+---@param fit LvimRenderTableFit
 ---@return boolean drawn
-local function emit_table_wrapped(ctx, node, info)
+local function emit_table_wrapped(ctx, node, info, fit)
     local tconf = ctx.fconf.tables --[[@as LvimRenderTablesConfig]]
     local sr, _, er, ec = node:range()
     local end_row = ec == 0 and er - 1 or er
@@ -1937,28 +2280,15 @@ local function emit_table_wrapped(ctx, node, info)
     -- would leave the record depending on whichever pass happened to run last, and the cursor
     -- hiding that reads it would flicker with it.
     local bst = state.get(ctx.buf)
-    local function record(last)
-        if bst == nil then
-            return
-        end
-        bst.boxed = bst.boxed or {}
-        bst.boxed[sr] = last
-    end
+    local is_current = ctx.win == api.nvim_get_current_win()
 
-    local fit = info.fit
-    if fit == nil then
-        record(nil)
-        return false
-    end
-    -- No row above to hang from: this shape cannot draw there. Under 'nowrap' the ordinary
-    -- in-place rendering then takes the table (the caller only skips it while a `fit` layout
-    -- exists, which is a wrapping window). Under 'wrap' there is no alternative and the table is
-    -- left as its own plain text -- the same all-or-nothing rule as a box that cannot fit, see the
-    -- caller. So a table written on the FIRST line of a wrapping document renders unstyled.
-    if sr == 0 then
-        record(nil)
-        return false
-    end
+    -- WHERE THE BOX HANGS. Normally on the row above; where that row cannot carry it, on the
+    -- table's own first row, whose text is concealed and which then reads as the blank line above
+    -- the box. The hidden span starts one row later, so "the anchor is the row above the span"
+    -- holds for the navigation either way.
+    local own = anchor_is_own_row(ctx, node, sr)
+    local anchor = own and sr or sr - 1
+    local first = anchor + 1
 
     ---@type TSNode[]
     local rows = {}
@@ -1973,7 +2303,7 @@ local function emit_table_wrapped(ctx, node, info)
         end
     end
     if #rows == 0 then
-        record(nil)
+        forget_box(ctx, sr)
         return false
     end
 
@@ -1982,8 +2312,10 @@ local function emit_table_wrapped(ctx, node, info)
     -- window top at 11, rows 14..19 of a 30-line block were on screen, and Ctrl-E moved through it
     -- one row at a time. So the box needs no "fully visible" rule; what it needs is for the lane
     -- that reconciles its marks to look at every row it owns, which is what this span asks for.
-    ctx.extend = ctx.extend or { first = sr - 1, last = end_row }
-    ctx.extend.first = math.min(ctx.extend.first, sr - 1)
+    -- The row above stays in the span even under an own-row anchor: a mark the other shape left
+    -- there must be reachable to be removed.
+    ctx.extend = ctx.extend or { first = math.max(sr - 1, 0), last = end_row }
+    ctx.extend.first = math.min(ctx.extend.first, math.max(sr - 1, 0))
     ctx.extend.last = math.max(ctx.extend.last, end_row)
 
     -- WHICH ROW READS AS ACTIVE. Two sources, in order: the WIDGET index when the reader is
@@ -1991,11 +2323,12 @@ local function emit_table_wrapped(ctx, node, info)
     -- cursor row to read), and otherwise the real cursor's own row — it can still land inside by a
     -- search or a `:N`. Neovim draws no 'cursorline' over virtual lines either way, so the box
     -- paints its own active row or none is visible at all.
-    local active = bst ~= nil and bst.box_active or nil
+    -- The walk is the CURRENT window's: another window on this buffer shows the same table unlit.
+    local active = is_current and bst ~= nil and bst.box_active or nil
     -- Only a WALKING record lights a row: nav mode "stop" parks the same record on the anchor to
     -- keep `i`/cursor-hiding working, but treats the table as one unit with no active row.
-    local widget_index = (active ~= nil and active.walk and active.first == sr) and active.index or nil
-    local cursor = ctx.win == api.nvim_get_current_win() and (api.nvim_win_get_cursor(ctx.win)[1] - 1) or -1
+    local widget_index = (active ~= nil and active.walk and active.first == first) and active.index or nil
+    local cursor = is_current and (api.nvim_win_get_cursor(ctx.win)[1] - 1) or -1
 
     ---@type [string, string][][]
     local lines = {}
@@ -2007,17 +2340,44 @@ local function emit_table_wrapped(ctx, node, info)
         lines[#lines + 1] =
             border_line(tconf.borders, fit.cols, tconf.borders.top_left, tconf.borders.top_mid, tconf.borders.top_right)
     end
+    --- How many screen lines a source row takes in the fitted layout.
+    ---@param row_node TSNode
+    ---@return integer
+    local function row_height(row_node)
+        local row = row_node:range()
+        local height = 1
+        for _, wrapped in pairs(fit.rows[row - sr] or {}) do
+            height = math.max(height, #wrapped)
+        end
+        return height
+    end
+    -- The underline is for a table whose rows can be mistaken for one another. Where every body
+    -- row is a single line, each line already is a row and the marks would only add noise. The
+    -- header is followed by the separator and the last row by the border, so neither needs it.
+    local rows_wrap = false
+    for index = 2, #rows do
+        rows_wrap = rows_wrap or row_height(rows[index]) > 1
+    end
     for index, row_node in ipairs(rows) do
         local row = row_node:range()
         local cells = fit.rows[row - sr] or {}
-        local height = 1
-        for _, wrapped in pairs(cells) do
-            height = math.max(height, #wrapped)
-        end
+        local height = row_height(row_node)
         local body_hl = (index == 1 and tconf.head) and "LvimRenderTableHead" or "Normal"
         local on_cursor = widget_index ~= nil and index == widget_index or (widget_index == nil and row == cursor)
         for line = 1, height do
-            lines[#lines + 1] = wrapped_row(fit, tconf.borders, cells, line, info.aligns, body_hl, on_cursor)
+            local row_end = rows_wrap and line == height and index > 1 and index < #rows
+            lines[#lines + 1] = wrapped_row(
+                fit,
+                tconf.borders,
+                cells,
+                line,
+                info.aligns,
+                body_hl,
+                on_cursor,
+                row_end,
+                info.paint[row - sr],
+                fit.places[row - sr]
+            )
             if on_cursor and active_at == nil then
                 active_at = #lines
             end
@@ -2062,15 +2422,19 @@ local function emit_table_wrapped(ctx, node, info)
     -- The UNPAGINATED height is recorded for the engine: entering a walk only scrolls the view
     -- when the block genuinely needs more room than the window has under the parked row, and
     -- that question is answered here, where the block is assembled.
-    if bst ~= nil then
+    if bst ~= nil and is_current then
         bst.box_lines = bst.box_lines or {}
-        bst.box_lines[sr] = #lines
+        bst.box_lines[first] = #lines
     end
 
     local tarea = api.nvim_win_get_height(ctx.win)
         - (api.nvim_get_option_value("winbar", { win = ctx.win }) ~= "" and 1 or 0)
     local budget = math.max(3, (active ~= nil and active.avail) or (tarea - 3))
-    if widget_index ~= nil and #lines > budget then
+    -- A cursor standing on a hidden row needs the same window: a search or a `:N` lands there, and
+    -- Neovim shows only the tail of a virtual block taller than the window (measured: `/v90` with
+    -- rows 102+ on screen). With the block paged around that row, the hit is on screen.
+    local cursor_inside = cursor >= first and cursor <= end_row
+    if (widget_index ~= nil or cursor_inside) and #lines > budget then
         -- THE HEADER IS PINNED, never paged. Paging from the top of the box walked the window
         -- straight past the header row while keeping the separator under it, so the band read as
         -- empty — the reader's own report, and the extmark dump showed the row simply absent from
@@ -2115,17 +2479,37 @@ local function emit_table_wrapped(ctx, node, info)
         lines = paged
     end
 
-    op(ctx, sr - 1, 0, { virt_lines = lines })
+    local prefix = table_prefix(ctx, node)
+    for i, chunks in ipairs(lines) do
+        if fit.overflow then
+            chunks = clip_chunks(chunks, fit.avail, tconf.borders.overflow or "›")
+        end
+        if #prefix > 0 then
+            local joined = vim.list_extend({}, prefix)
+            chunks = vim.list_extend(joined, chunks)
+        end
+        lines[i] = chunks
+    end
+
+    op(ctx, anchor, 0, { virt_lines = lines })
+    if own then
+        op(ctx, sr, 0, { end_col = #line_at(ctx, sr), conceal = "" })
+        ctx.skip_rows[sr] = true
+    end
     -- Its rows are hidden, so the hardware cursor standing in them has nothing to stand ON: the
     -- engine reads this span and hides it while the cursor is inside (the box paints the active
     -- row itself, which is what you actually navigate by). The ROW COUNT rides along, because the
     -- widget index needs to know where the table ends and the buffer resumes.
-    record(end_row)
-    if bst ~= nil then
+    if bst ~= nil and is_current then
+        forget_box(ctx, sr, first)
+        bst.boxed = bst.boxed or {}
+        bst.boxed[first] = end_row
         bst.box_rows = bst.box_rows or {}
-        bst.box_rows[sr] = #rows
+        bst.box_rows[first] = #rows
+        bst.box_start = bst.box_start or {}
+        bst.box_start[first] = sr
     end
-    for row = sr, end_row do
+    for row = first, end_row do
         op(ctx, row, 0, { conceal_lines = "" })
         -- The rows belong to the box: the inline pass would otherwise decorate text that is not
         -- on screen, and the cell text the box draws already carries those icons (`span_text`).
@@ -2153,10 +2537,13 @@ local function emit_table(ctx, node, ichild, iq)
     -- (It was cached with the analysis at first, and picked up a text width measured before the
     -- gutter existed — 79 instead of 72 — which stuck for the rest of the generation and drew a
     -- box seven cells too wide. The width is part of the key now, so a resize re-lays it out too.)
+    ---@type LvimRenderTableFit|nil
+    local fit = nil
     if not info.degraded and tconf.wrap_cells and vim.wo[ctx.win].wrap then
-        local avail = text_width(ctx)
-        if info.fit_width ~= avail then
-            info.fit_width = avail
+        local _, prefix_col = node:range()
+        local avail = text_width(ctx) - prefix_col
+        fit = info.fits[ctx.win]
+        if fit == nil or fit.avail ~= avail then
             -- ALWAYS, under a wrapping window — not only when the natural box is too wide. The
             -- ordinary rendering pads the cells INSIDE the source line, so the line keeps its own
             -- length: a 94-column row still needs two screen rows in a 111-column window even
@@ -2164,10 +2551,12 @@ local function emit_table(ctx, node, ichild, iq)
             -- stop that from a decoration, so the box takes over the drawing entirely and the
             -- source rows are hidden. `fit_layout` shrinks nothing when the columns already fit,
             -- so a table that was fine stays exactly as wide as it was.
-            info.fit = fit_layout(info, avail, tconf)
+            fit = fit_layout(info, avail, tconf)
+            info.fits[ctx.win] = fit
         end
-    elseif info.fit ~= nil then
-        info.fit, info.fit_width = nil, nil
+    else
+        info.fits[ctx.win] = nil
+        forget_box(ctx, sr)
     end
 
     -- THE WRAPPED BOX. A table too wide for a wrapping window is re-laid out narrower, with each
@@ -2187,7 +2576,7 @@ local function emit_table(ctx, node, ichild, iq)
     -- for an edit that does not happen there. `tables_box_reveal` restores the old behaviour for
     -- anyone who wants it.
     local box_first = not config.tables_box_reveal
-    if box_first and not info.degraded and info.fit ~= nil and emit_table_wrapped(ctx, node, info) then
+    if box_first and fit ~= nil and emit_table_wrapped(ctx, node, info, fit) then
         return
     end
 
@@ -2201,20 +2590,18 @@ local function emit_table(ctx, node, ichild, iq)
         return
     end
 
-    if not info.degraded and info.fit ~= nil then
-        if emit_table_wrapped(ctx, node, info) then
+    if fit ~= nil then
+        if emit_table_wrapped(ctx, node, info, fit) then
             return
         end
-        -- The box could not be put up (the table is taller than the window, so its anchor row is
-        -- off screen and the block could never be taken down again). Under 'wrap' the in-place
-        -- rendering is not an alternative — it pads INSIDE the source line, which then wraps and
-        -- comes apart — so the table is left as its own plain text. The all-or-nothing rule this
-        -- renderer already follows for a box that cannot fit, applied to a box that cannot hang.
+        -- The box could not be put up (no rows to draw). Under 'wrap' the in-place rendering is
+        -- not an alternative — it pads INSIDE the source line, which then wraps and comes apart —
+        -- so the table is left as its own plain text.
         return
     end
 
     -- The degrade rule includes the live window: a box wider than the text area cannot draw.
-    local degraded = info.degraded or info.total > text_width(ctx)
+    local degraded = info.degraded or info.total > tconf.max_width or info.total > text_width(ctx)
 
     for child in node:iter_children() do
         local kind = child:type()
@@ -2276,6 +2663,9 @@ local function emit_table(ctx, node, ichild, iq)
                 -- Pipes become the vertical border glyph via CONCEAL, never an overlay: an
                 -- overlay anchored at the same byte as an inline pad paints over the pad and
                 -- leaves the raw pipe beside it (measured on a manually padded source table).
+                for _, col in ipairs(info.code_pipes[row - sr] or {}) do
+                    op(ctx, row, col, { end_col = col + 1, conceal = "" })
+                end
                 local pipes = {}
                 for pipe in child:iter_children() do
                     if not pipe:named() and pipe:type() == "|" then

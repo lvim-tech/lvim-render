@@ -183,17 +183,6 @@ it("under 'wrap' a table is a box hanging from the row above it", function()
     truthy(d.virt_lines > 0, "the whole box is virtual lines: " .. vim.inspect(d))
 end)
 
-it("under 'wrap' a table on the FIRST line has nothing to hang from, and stays plain text", function()
-    -- Measured, and deliberate: the box is anchored on the row ABOVE the table, because virtual
-    -- lines attached to a `conceal_lines` row do not draw at all. With no such row the box cannot
-    -- be put up, and under 'wrap' the in-place rendering is not an alternative (it pads inside the
-    -- source line, which then wraps and comes apart). All or nothing, as everywhere else here.
-    vim.cmd("enew!")
-    vim.wo.wrap = true
-    local buf = markdown({ "| a | b |", "|---|---|", "| 1 | 2 |" })
-    eq(0, drawn(buf).marks, "a half-rendered table is the thing this renderer treats as a defect")
-end)
-
 it("under 'nowrap' the same table is drawn in place, first line or not", function()
     vim.cmd("enew!")
     vim.wo.wrap = false
@@ -202,6 +191,266 @@ it("under 'nowrap' the same table is drawn in place, first line or not", functio
     truthy(d.marks > 0, "with no wrapping to come apart, the in-place rendering applies: " .. vim.inspect(d))
     truthy(d.virt_text > 0, "in-place borders are virt_text on the source rows: " .. vim.inspect(d))
     vim.wo.wrap = true
+end)
+
+--- The virtual lines of the first box in `buf`, each flattened to its text.
+---@param buf integer
+---@return string[] texts
+---@return table[][] raw
+local function box_lines(buf)
+    for _, m in ipairs(marks_of(buf)) do
+        if m[4].virt_lines then
+            local texts = {}
+            for i, chunks in ipairs(m[4].virt_lines) do
+                local parts = {}
+                for _, chunk in ipairs(chunks) do
+                    parts[#parts + 1] = chunk[1]
+                end
+                texts[i] = table.concat(parts)
+            end
+            return texts, m[4].virt_lines
+        end
+    end
+    return {}, {}
+end
+
+--- Does this virtual line carry the row-end underline?
+---@param chunks table[]
+---@return boolean
+local function has_row_end(chunks)
+    for _, chunk in ipairs(chunks) do
+        if type(chunk[2]) == "table" and vim.tbl_contains(chunk[2], "LvimRenderTableRowEnd") then
+            return true
+        end
+    end
+    return false
+end
+
+it("under 'wrap' a table past max_width is still a fitted box", function()
+    vim.cmd("enew!")
+    vim.wo.wrap = true
+    local buf = markdown({ "", "| a | b |", "|---|---|", "| x | " .. string.rep("word ", 100) .. "|" })
+    local texts = box_lines(buf)
+    truthy(#texts > 0, "a long cell must not cost the table its box")
+    local width = vim.api.nvim_win_get_width(0)
+    for _, text in ipairs(texts) do
+        truthy(vim.fn.strdisplaywidth(text) <= width, "wider than the window: " .. text)
+    end
+end)
+
+it("under 'nowrap' max_width still limits the in-place drawing", function()
+    vim.cmd("enew!")
+    vim.wo.wrap = false
+    local buf = markdown({ "", "| a | b |", "|---|---|", "| x | " .. string.rep("word ", 100) .. "|" })
+    eq(0, drawn(buf).virt_lines, "no box border over a table too wide to draw")
+    vim.wo.wrap = true
+end)
+
+it("a wrapped row is joined by the continuation glyph and ends underlined", function()
+    vim.cmd("enew!")
+    vim.wo.wrap = true
+    local long = string.rep("word ", 40)
+    local buf = markdown({ "", "| a | b |", "|---|---|", "| x | " .. long .. "|", "| y | z |", "| p | q |" })
+    local texts, raw = box_lines(buf)
+    local continued, ends = 0, {}
+    for i, text in ipairs(texts) do
+        if text:find("┊", 1, true) then
+            continued = continued + 1
+            eq(nil, text:find("│", 1, true), "one line, one glyph: " .. text)
+        end
+        if has_row_end(raw[i]) then
+            ends[#ends + 1] = vim.trim((text:gsub("[│┊]", " ")))
+        end
+    end
+    truthy(continued > 0, "the long row takes more than one line: " .. vim.inspect(texts))
+    eq(2, #ends, "the wrapped row and the row after it, not the last: " .. vim.inspect(ends))
+    truthy(ends[2]:find("^y") ~= nil, "the row end sits on the row's last line: " .. vim.inspect(ends))
+end)
+
+it("a table with no wrapped body row draws no row marks", function()
+    vim.cmd("enew!")
+    vim.wo.wrap = true
+    local buf = markdown({ "", "| a | b |", "|---|---|", "| 1 | 2 |", "| 3 | 4 |" })
+    local texts, raw = box_lines(buf)
+    for i, text in ipairs(texts) do
+        eq(nil, text:find("┊", 1, true), text)
+        eq(false, has_row_end(raw[i]), text)
+    end
+end)
+
+--- A wrapping buffer holding `lines`.
+---@param lines string[]
+---@return integer
+local function wrapped(lines)
+    vim.cmd("silent! only!")
+    vim.cmd("enew!")
+    vim.wo.wrap = true
+    return markdown(lines)
+end
+
+--- The screen's rows, right-trimmed.
+---@param n integer
+---@return string[]
+local function screen(n)
+    vim.cmd("redraw")
+    vim.wait(100, function()
+        return false
+    end)
+    vim.cmd("redraw")
+    local out = {}
+    for row = 1, n do
+        local cells = {}
+        for col = 1, vim.o.columns do
+            cells[col] = vim.fn.screenstring(row, col)
+        end
+        out[row] = (table.concat(cells):gsub("%s+$", ""))
+    end
+    return out
+end
+
+--- Is `text` on any of the screen's first `n` rows?
+---@param n integer
+---@param text string
+---@return boolean
+local function on_screen(n, text)
+    return table.concat(screen(n), "\n"):find(text, 1, true) ~= nil
+end
+
+local T = { "| aa | bb |", "|---|---|", "| 11 | 22 |" }
+
+it("a table on the first line is a box, its own row the anchor", function()
+    wrapped(T)
+    truthy(on_screen(8, "│ 11 "), vim.inspect(screen(8)))
+    eq(false, on_screen(8, "|---"), "no raw delimiter")
+end)
+
+it("two tables with no blank line between them both show", function()
+    wrapped({ "", T[1], T[2], T[3], "| cc | dd |", "|---|---|", "| 33 | 44 |" })
+    truthy(on_screen(14, "│ 11 ") and on_screen(14, "│ 33 "), vim.inspect(screen(14)))
+end)
+
+it("a closed fold over the row above does not take the table with it", function()
+    wrapped({ "# h", "", "text", "", T[1], T[2], T[3] })
+    vim.wo.foldmethod = "manual"
+    vim.wo.foldenable = true
+    vim.cmd("3,4fold")
+    truthy(on_screen(10, "│ 11 "), vim.inspect(screen(10)))
+    vim.cmd("normal! zE")
+end)
+
+it("two windows on one buffer each get their own box", function()
+    local buf = wrapped({ "", "| a | b |", "|---|---|", "| x | " .. string.rep("word ", 25) .. "|" })
+    vim.cmd("vsplit")
+    vim.cmd("vertical resize 30")
+    screen(1)
+    screen(1)
+    local widths = {}
+    for _, m in ipairs(vim.api.nvim_buf_get_extmarks(buf, -1, 0, -1, { details = true })) do
+        if m[4].virt_lines then
+            local parts = {}
+            for _, chunk in ipairs(m[4].virt_lines[1]) do
+                parts[#parts + 1] = chunk[1]
+            end
+            widths[vim.fn.strdisplaywidth(table.concat(parts))] = true
+        end
+    end
+    eq(2, vim.tbl_count(widths), "one width per window: " .. vim.inspect(widths))
+    vim.cmd("only!")
+end)
+
+it("a window under 'nowrap' beside a wrapping one shows no raw pipes", function()
+    wrapped({ "", T[1], T[2], T[3] })
+    vim.cmd("vsplit")
+    vim.wo.wrap = false
+    eq(false, on_screen(8, "| aa"), vim.inspect(screen(8)))
+    vim.cmd("only!")
+    vim.wo.wrap = true
+end)
+
+it("turning 'wrap' off forgets the box", function()
+    local buf = wrapped({ "", T[1], T[2], T[3] })
+    screen(1)
+    truthy(next(require("lvim-render.state").get(buf).boxed or {}) ~= nil, "precondition: boxed")
+    vim.wo.wrap = false
+    screen(1)
+    eq(nil, next(require("lvim-render.state").get(buf).boxed or {}))
+    vim.wo.wrap = true
+end)
+
+it("a search into a box taller than the window shows the hit, and j goes on from it", function()
+    local lines = { "# h", "", "| a | b |", "|---|---|" }
+    for i = 1, 120 do
+        lines[#lines + 1] = ("| %d | v%d |"):format(i, i)
+    end
+    wrapped(lines)
+    screen(1)
+    vim.fn.search("v90")
+    vim.cmd("doautocmd CursorMoved")
+    truthy(on_screen(vim.o.lines - 2, "│ v90 "), vim.inspect(screen(vim.o.lines - 2)))
+    vim.cmd("normal j")
+    truthy(on_screen(vim.o.lines - 2, "│ v91 "), vim.inspect(screen(vim.o.lines - 2)))
+    vim.cmd("doautocmd CursorMoved")
+    vim.cmd("normal! gg")
+    vim.cmd("doautocmd CursorMoved")
+end)
+
+it("a table too wide for min_col is cut at the edge, and says so", function()
+    wrapped({ "", "|" .. string.rep(" col |", 30), "|" .. string.rep("---|", 30), "|" .. string.rep(" 1 |", 30) })
+    local rows = screen(6)
+    truthy(rows[3]:find("│ col", 1, true) ~= nil, vim.inspect(rows))
+    truthy(rows[3]:find("›", 1, true) ~= nil, "the cut is visible: " .. vim.inspect(rows))
+end)
+
+it("a box in a quote keeps the border, in a list the indent", function()
+    wrapped({ "> text", "> " .. T[1], "> " .. T[2], "> " .. T[3] })
+    truthy(on_screen(6, "▍ │ 11"), vim.inspect(screen(6)))
+    wrapped({ "- item", "", "  " .. T[1], "  " .. T[2], "  " .. T[3] })
+    truthy(on_screen(8, "  │ 11"), vim.inspect(screen(8)))
+end)
+
+it("a pipe escaped inside a code span shows as a pipe", function()
+    local cells = { "", "| a | b |", "|---|---|", "| `x\\|y` | z |" }
+    wrapped(cells)
+    truthy(on_screen(6, "x|y"), vim.inspect(screen(6)))
+    vim.cmd("enew!")
+    vim.wo.wrap = false
+    markdown(cells)
+    truthy(on_screen(6, "x|y"), vim.inspect(screen(6)))
+    vim.wo.wrap = true
+end)
+
+it("styled text keeps its highlight in the box, and a repaint rewrites nothing", function()
+    local buf = wrapped({
+        "",
+        "| a | b |",
+        "|---|---|",
+        "| **b** | `c d` [l](http://x) ==m== |",
+        "| x | " .. string.rep("w ", 60) .. "|",
+        "| p | q |",
+    })
+    screen(1)
+    local seen, top = {}, 0
+    for _, m in ipairs(vim.api.nvim_buf_get_extmarks(buf, -1, 0, -1, { details = true })) do
+        top = math.max(top, m[1])
+        for _, vline in ipairs(m[4].virt_lines or {}) do
+            for _, chunk in ipairs(vline) do
+                if type(chunk[2]) == "table" then
+                    seen[chunk[2][#chunk[2]]] = chunk[1]
+                end
+            end
+        end
+    end
+    eq("b", seen["@markup.strong"], vim.inspect(seen))
+    eq("c d", seen["LvimRenderCodeInline"], vim.inspect(seen))
+    eq("m", seen["LvimRenderMark"], vim.inspect(seen))
+    truthy(seen["LvimRenderLink"] ~= nil, vim.inspect(seen))
+    screen(1)
+    screen(1)
+    local after = 0
+    for _, m in ipairs(vim.api.nvim_buf_get_extmarks(buf, -1, 0, -1, {})) do
+        after = math.max(after, m[1])
+    end
+    eq(top, after, "stacked highlights must compare equal across passes")
 end)
 
 it("plain prose is left alone", function()

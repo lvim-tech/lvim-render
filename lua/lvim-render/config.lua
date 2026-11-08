@@ -130,6 +130,8 @@
 ---@class LvimRenderTableBorders
 ---@field horizontal string
 ---@field vertical string
+---@field continuation string  the vertical glyph on the second and later lines of a wrapped row
+---@field overflow string  ends a line of a box cut at the window's edge
 ---@field top_left string
 ---@field top_mid string
 ---@field top_right string
@@ -144,10 +146,11 @@
 ---@field enabled boolean
 ---@field max_rows integer   a table with more rows than this DEGRADES to styled pipes only —
 ---   the full box needs every cell measured, and a huge table must never own the redraw
----@field max_width integer  the assembled box wider than this (or than the window) degrades the
----   same way. THE RULE, stated: the box is all-or-nothing per table — columns size to the
----   WIDEST RENDERED CELL, and when that cannot fit, the whole table falls back to styled
----   borders aligned to the text as written. A silently broken box is never an outcome
+---@field max_width integer  a table drawn IN PLACE (not a fitted box) wider than this, or than the
+---   window, degrades the same way. THE RULE, stated: the in-place box is all-or-nothing per table
+---   — columns size to the WIDEST RENDERED CELL, and when that cannot fit, the whole table falls
+---   back to styled borders aligned to the text as written. A fitted box under `wrap_cells` is
+---   not limited by it: its width comes from the window, not from the cells
 ---@field wrap_cells boolean  when the window WRAPS and the natural box is wider than it, shrink
 ---   the columns to fit and split every cell across as many lines as it then needs. The table is
 ---   drawn whole as virtual lines in that mode, so a wrapped cell can take the extra rows; the
@@ -155,6 +158,8 @@
 ---@field box boolean        top and bottom border lines (virtual lines above/below the table)
 ---@field head boolean       tinted band over the header row
 ---@field min_col integer    the narrowest a column may be
+---@field overflow_col integer  when even `min_col` columns cannot fit, the widest a column is drawn
+---   in the box that is then cut at the window's edge
 ---@field borders LvimRenderTableBorders
 
 ---@class LvimRenderCalloutsConfig
@@ -657,18 +662,20 @@ local M = {
             -- 'nowrap', or hiding the source rows outright and drawing the table as virtual lines.
             -- This is the second.
             --
-            -- ITS COSTS, equally measured, since they are real: the box is ONE block of virtual
-            -- lines hanging off the row above the table (virtual lines do not draw on a
-            -- `conceal_lines` row), so it can only be drawn while the WHOLE table is on screen —
-            -- it pops in and out as you scroll past, scrolling THROUGH it is one jump rather than
-            -- line by line, and a table taller than the window gets nothing at all. Those are the
-            -- price of a table that is readable instead of broken; the full-screen table editor is
-            -- the answer for the ones this cannot serve.
+            -- ITS COST, equally measured: the box is ONE block of virtual lines hanging off the
+            -- row above the table (virtual lines do not draw on a `conceal_lines` row), or off the
+            -- table's own first row where that row cannot carry it. Neovim shows only the tail of
+            -- a block taller than the window, so such a box is paged while the cursor walks it or
+            -- stands on one of its rows. A table with more columns than the window can seat is
+            -- cut at the edge; the full-screen table editor has the rest.
             wrap_cells = true,
             min_col = 3,
+            overflow_col = 12,
             borders = {
                 horizontal = "─",
                 vertical = "│",
+                continuation = "┊",
+                overflow = "›",
                 top_left = "┌",
                 top_mid = "┬",
                 top_right = "┐",

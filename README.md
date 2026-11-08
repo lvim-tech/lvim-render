@@ -74,9 +74,9 @@ generation-cancelled: a superseded rebuild never paints stale decorations.
   (`:---`/`:---:`/`---:`). Columns size to the widest RENDERED cell — a link cell measures as
   icon + label, a pill as its padded cells, CJK as double cells, never as source bytes — and a
   manually space-padded source table reflows to compact content-sized columns. THE RULE: the box
-  is all-or-nothing per table; beyond `max_rows`, `max_width` or the window's width the whole
-  table degrades to styled pipes aligned to your text as written — a silently broken box is
-  never an outcome. Analysis is cached per edit, so a 200×10 table scrolls at screen cost.
+  is all-or-nothing per table; beyond `max_rows`, or under `'nowrap'` beyond `max_width` or the
+  window's width, the whole table degrades to styled pipes aligned to your text as written — a
+  silently broken box is never an outcome. Analysis is cached per edit, so a 200×10 table scrolls at screen cost.
   **Under `'wrap'` the table is drawn as a fitted virtual box** (`tables.wrap_cells`, on by
   default), because it is the only thing that works there. THE MEASUREMENT: concealed text still
   takes its width when a line wraps — a 52-column line whose visible form is 10 columns still
@@ -84,11 +84,21 @@ generation-cancelled: a superseded rebuild never paints stale decorations.
   longer raw than rendered, so Neovim wraps it by the RAW length and the columns come apart, and no
   decoration can prevent that because a decoration cannot shorten a line. The only two answers are
   `'nowrap'`, or hiding the source rows and drawing the table as virtual lines. The box does the
-  second: the columns shrink to the window and every cell is split across as many lines as it then
-  needs. ITS COSTS, equally measured: the box is ONE block of virtual lines hanging off the row
-  above the table (virtual lines do not draw on a `conceal_lines` row), so it can only be drawn
-  while the WHOLE table is on screen — it pops in and out as you scroll past, scrolling THROUGH it
-  is one jump rather than line by line, and a table taller than the window gets nothing. The row
+  second: the columns shrink to the window, whatever the natural width (`max_width` does not limit
+  it), and every cell is split across as many lines as it then needs. The later lines of a row use
+  the `continuation` glyph, and when rows wrap, each body row that has another below it ends
+  underlined (`LvimRenderTableRowEnd`), so one long row does not read as several. Bold, italic, strikethrough, `code`, links and
+  `==marks==` keep their highlights inside the box. In a block quote or a list item the box keeps the
+  quote's border or the indent. A table with more columns than the window can seat, even at
+  `min_col`, is cut at the edge under the `overflow` glyph (`›`), its columns at most `overflow_col`
+  wide; the editor has the rest. ITS COST, equally measured: the box is ONE block of virtual lines
+  hanging off the row above the table (virtual lines do not draw on a `conceal_lines` row). Where
+  that row cannot carry it (the file's first line, a table right above, a hidden fence, a closed
+  fold) the box hangs off the table's own first row, which then reads as a blank line, wrapped by
+  its raw length. Neovim shows only the tail of a block taller than the window, so such a box is
+  paged around the row while you walk it or while the cursor stands on it after a search or `:N`.
+  Each window has its own marks, so two windows on one buffer draw it at their own width and
+  under their own `'wrap'`. The closed-fold check runs in the current window only. The row
   the cursor is on is painted with the editor's own `CursorLine` background, since Neovim draws no
   `'cursorline'` over virtual lines — and the hardware cursor is HIDDEN while it stands in one
   (`tables_hide_cursor`), because those rows are not on screen for it to stand on. It is hidden
@@ -330,14 +340,17 @@ require("lvim-render").setup({
         tables = {
             enabled = true,
             max_rows = 400, -- beyond: degrade to styled pipes (no full-table scan)
-            max_width = 200, -- assembled box wider than this (or the window): same degrade
+            max_width = 200, -- drawn in place and wider than this (or the window): same degrade
             box = true, -- top/bottom border lines (virtual lines)
             head = true, -- tinted band over the header row
             wrap_cells = true, -- under 'wrap', draw the table as a fitted box (see the note below)
             min_col = 3, -- narrowest column
+            overflow_col = 12, -- when min_col cannot fit either: column limit of the box cut at the edge
             borders = {
                 horizontal = "─",
                 vertical = "│",
+                continuation = "┊", -- later lines of a wrapped row
+                overflow = "›", -- ends a line of a box cut at the window's edge
                 top_left = "┌",
                 top_mid = "┬",
                 top_right = "┐",

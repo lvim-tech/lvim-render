@@ -286,6 +286,24 @@ end
 --- table", not as a scroll; every further line arrives one step at a time.
 local ENTRY_ROOM = 3
 
+--- Which row a walk starts on. From a hidden row the walk goes on from where the cursor already is
+--- (a search hit, a `:N`); from outside, it enters at the near end.
+---@param st LvimRenderBufState
+---@param span { first: integer, last: integer }
+---@param cur_row integer  0-based
+---@param rows integer
+---@param delta integer
+---@return integer
+local function walk_entry_index(st, span, cur_row, rows, delta)
+    local start = (st.box_start or {})[span.first]
+    if start == nil or cur_row < span.first or cur_row > span.last then
+        return delta > 0 and 1 or rows
+    end
+    -- The delimiter is a source row and not a table row: header 1, delimiter 1, data from 2.
+    local here = cur_row - start <= 1 and 1 or cur_row - start
+    return math.max(1, math.min(rows, here + delta))
+end
+
 --- End a widget walk. Every exit goes through here — stepping off either end, moving the cursor
 --- away, opening the editor, an edit landing while a walk is up — so no path can leave the box
 --- claiming an active row nobody is on. (The walk borrows nothing any more: the view is moved
@@ -316,7 +334,7 @@ local function rebuild(buf, gen)
     -- keep a box describing text that no longer exists, and `conceal_lines` marks hiding rows that
     -- are no longer a table's. Dropping the whole lane on the debounce is the honest reset: the
     -- next paint rebuilds exactly what is visible, at the same screen cost as any other redraw.
-    api.nvim_buf_clear_namespace(buf, render.ns_inline, 0, -1)
+    render.clear_lanes(buf)
     -- THE BOX BOOKKEEPING GOES WITH THE LANE. `boxed`/`box_rows`/`box_lines` describe the marks
     -- just dropped, in the ROW NUMBERS of the text as it was — after an edit both can be wrong,
     -- and the navigation that reads them would walk phantom tables (measured: deleting a table
@@ -327,6 +345,8 @@ local function rebuild(buf, gen)
     st.boxed = nil
     st.box_rows = nil
     st.box_lines = nil
+    st.box_start = nil
+    st.box_paged = nil
     release_box(st)
     fold.rebuild(buf)
     if dirty ~= nil then
@@ -1361,13 +1381,20 @@ function M.attach(buf)
                     local out_row = math.min(span.last + 1, total - 1)
                     local parked = math.abs(cur_row - anchor_row) <= math.abs(cur_row - out_row) and anchor_row
                         or out_row
+                    -- From inside a box taller than the window the walk parks above whatever is
+                    -- nearer: a walk parked below is never paged, and all it could show is the
+                    -- block's tail, far from the row the cursor was on.
+                    local box_height = (st.box_lines or {})[span.first] or 0
+                    if cur_row >= span.first and cur_row <= span.last and box_height >= text_height(0) - 3 then
+                        parked = anchor_row
+                    end
                     st.box_active = {
                         first = span.first,
                         last = span.last,
                         anchor = span.first - 1,
                         parked = parked,
                         rows = rows,
-                        index = delta > 0 and 1 or rows,
+                        index = walk_entry_index(st, span, cur_row, rows, delta),
                         walk = true,
                     }
                     api.nvim_win_set_cursor(0, { math.max(1, parked + 1), 0 })
@@ -1506,7 +1533,7 @@ function M.detach(buf)
             pcall(vim.keymap.del, "n", key, { buffer = buf })
         end
         if api.nvim_buf_is_loaded(buf) then
-            api.nvim_buf_clear_namespace(buf, render.ns_inline, 0, -1)
+            render.clear_lanes(buf)
             redraw(buf)
         end
     end
@@ -1527,7 +1554,7 @@ function M.set_enabled(buf, on)
     if not on then
         -- The ephemeral lane vanishes on the next redraw by itself; the persistent inline lane
         -- must be taken down explicitly.
-        api.nvim_buf_clear_namespace(buf, render.ns_inline, 0, -1)
+        render.clear_lanes(buf)
     end
     redraw(buf)
 end
@@ -1550,7 +1577,7 @@ function M.set_raw(buf, on)
     if on then
         -- The ephemeral lane vanishes on the next redraw by itself; the persistent inline lane
         -- must be taken down explicitly.
-        api.nvim_buf_clear_namespace(buf, render.ns_inline, 0, -1)
+        render.clear_lanes(buf)
     end
     redraw(buf)
 end
@@ -1588,6 +1615,14 @@ function M.on_win_enter(win)
     local buf = api.nvim_win_get_buf(win)
     if M.owns(buf) then
         apply_win(win, buf)
+        -- The box record describes the current window's drawing, and that just changed hands.
+        local st = state.get(buf)
+        if st ~= nil and st.box_active ~= nil then
+            release_box(st)
+        end
+        if M.eligible(buf) then
+            redraw_walk(buf)
+        end
     elseif state.wins[win] ~= nil and state.wins[win].buf ~= buf then
         restore_win(win)
     end
@@ -1597,6 +1632,7 @@ end
 ---@param win integer
 ---@return nil
 function M.on_win_closed(win)
+    render.free_win_ns(win)
     state.wins[win] = nil
     state.reveal[win] = nil
 end
@@ -1692,6 +1728,17 @@ function M.on_cursor_moved()
         return
     end
     local cur = api.nvim_win_get_cursor(win)[1] - 1
+    -- The cursor on a hidden row of a box taller than the window: the block is paged around it, so
+    -- every move there has to repaint, and so does the move that leaves.
+    local span = render.boxed_span(buf, cur)
+    local tall = span ~= nil
+        and st ~= nil
+        and (st.box_lines or {})[span.first] ~= nil
+        and st.box_lines[span.first] >= text_height(win) - 3
+    if tall or (st ~= nil and st.box_paged) then
+        st.box_paged = tall or nil
+        redraw_walk(buf)
+    end
     local old = state.reveal[win]
     if old == nil and not render.mode_reveals(api.nvim_get_mode().mode) then
         -- Nothing revealed and this mode reveals nothing: an ordinary cursor move in normal
@@ -1763,7 +1810,9 @@ function M.on_mode_changed(from, to)
                     return
                 end
                 for first, last in pairs(st.boxed or {}) do
-                    if row >= first and row <= last then
+                    -- A box hanging on the table's own first row counts that row too: its text is
+                    -- part of the table the box draws.
+                    if row >= ((st.box_start or {})[first] or first) and row <= last then
                         vim.cmd("stopinsert")
                         require("lvim-render.table_editor").open(buf)
                         return
@@ -1810,12 +1859,17 @@ end
 ---@return string
 local function inline_key(row, col, opts)
     local parts = { tostring(row), tostring(col) }
+    -- A stack of groups is compared by its names. As a table it has a new identity on every pass,
+    -- and the lane would differ from itself forever.
+    local function hl_name(hl)
+        return type(hl) == "table" and table.concat(hl, "+") or tostring(hl)
+    end
     for _, chunk in ipairs(opts.virt_text or {}) do
-        parts[#parts + 1] = chunk[1] .. "\1" .. tostring(chunk[2])
+        parts[#parts + 1] = chunk[1] .. "\1" .. hl_name(chunk[2])
     end
     for _, vline in ipairs(opts.virt_lines or {}) do
         for _, chunk in ipairs(vline) do
-            parts[#parts + 1] = chunk[1] .. "\1" .. tostring(chunk[2])
+            parts[#parts + 1] = chunk[1] .. "\1" .. hl_name(chunk[2])
         end
         parts[#parts + 1] = opts.virt_lines_above and "A" or "B"
     end
@@ -1834,20 +1888,15 @@ end
 --- edit that shifts rows can never desynchronise a shadow copy. An unchanged mark costs one
 --- table lookup; nothing is cleared wholesale.
 ---@param buf integer
+---@param ns integer  the lane of the window these rows are drawn in
 ---@param top integer  0-based first visible row
 ---@param bot integer  0-based last visible row
 ---@param wanted LvimRenderOp[]  the inline ops the walk produced for those rows
 ---@param dry boolean|nil  true = only ANSWER whether anything would change, write nothing —
 ---   the decoration provider's mode, since mark writes are illegal mid-redraw (see redraw_walk)
 ---@return boolean changed  whether the lane differed (dry) / was changed (wet)
-local function reconcile_inline(buf, top, bot, wanted, dry)
-    local have = api.nvim_buf_get_extmarks(
-        buf,
-        render.ns_inline,
-        { top, 0 },
-        { bot, -1 },
-        { details = true, overlap = false }
-    )
+local function reconcile_inline(buf, ns, top, bot, wanted, dry)
+    local have = api.nvim_buf_get_extmarks(buf, ns, { top, 0 }, { bot, -1 }, { details = true, overlap = false })
     local changed = false
     ---@type table<string, integer>  key → the extmark ID the buffer already carries
     local present = {}
@@ -1857,7 +1906,7 @@ local function reconcile_inline(buf, top, bot, wanted, dry)
             -- A duplicate can only come from an earlier bug; one of them goes.
             changed = true
             if not dry then
-                api.nvim_buf_del_extmark(buf, render.ns_inline, mark[1])
+                api.nvim_buf_del_extmark(buf, ns, mark[1])
             end
         else
             present[key] = mark[1]
@@ -1874,7 +1923,7 @@ local function reconcile_inline(buf, top, bot, wanted, dry)
         if needed[key] == nil then
             changed = true
             if not dry then
-                api.nvim_buf_del_extmark(buf, render.ns_inline, id --[[@as integer]])
+                api.nvim_buf_del_extmark(buf, ns, id --[[@as integer]])
             end
         end
     end
@@ -1884,7 +1933,7 @@ local function reconcile_inline(buf, top, bot, wanted, dry)
             if present[key] == nil then
                 changed = true
                 if not dry then
-                    pcall(api.nvim_buf_set_extmark, buf, render.ns_inline, o.row, o.col, o.opts)
+                    pcall(api.nvim_buf_set_extmark, buf, ns, o.row, o.col, o.opts)
                 end
             end
         end
@@ -1929,26 +1978,21 @@ function M.sync_inline(win, buf, top, bot)
             inline[#inline + 1] = ops[i]
         end
     end
-    reconcile_inline(buf, top, math.min(bot, api.nvim_buf_line_count(buf) - 1), inline)
+    reconcile_inline(buf, render.win_ns(win), top, math.min(bot, api.nvim_buf_line_count(buf) - 1), inline)
     return #inline
 end
 
---- Bring the persistent lane current for the CURRENT window's visible rows — the out-of-redraw
---- write seam every repaint request goes through (see redraw_walk). A buffer not on screen has
---- nothing to sync; its next paint's dry-check schedules one when it appears.
+--- Bring the persistent lane current for the visible rows of every window on `buf` — the
+--- out-of-redraw write seam every repaint request goes through (see redraw_walk). A buffer not on
+--- screen has nothing to sync; its next paint's dry-check schedules one when it appears.
 ---@param buf integer
 ---@return nil
 function M.sync_view(buf)
-    local win = api.nvim_get_current_win()
-    if api.nvim_win_get_buf(win) ~= buf then
-        win = vim.fn.win_findbuf(buf)[1]
-        if win == nil then
-            return
-        end
+    for _, win in ipairs(vim.fn.win_findbuf(buf)) do
+        local top = vim.fn.line("w0", win) - 1
+        local bot = vim.fn.line("w$", win) - 1 + render.SLACK
+        M.sync_inline(win, buf, top, bot)
     end
-    local top = vim.fn.line("w0", win) - 1
-    local bot = vim.fn.line("w$", win) - 1 + render.SLACK
-    M.sync_inline(win, buf, top, bot)
 end
 
 --- Wire the one decoration provider. Called once, from setup().
@@ -1989,14 +2033,19 @@ function M.start()
             -- notch (measured — the doubled/multiplying anchor rows). The pass only ASKS
             -- whether the lane differs (a box freshly scrolled into view, an active-row
             -- recolor under a dragged cursor) and defers the writes plus an honest repaint to
-            -- after this frame. Only the current window drives the schedule: a non-current
-            -- window's wants differ by design (no active row there) and would ping-pong the
-            -- buffer-global marks — the documented multi-window residual.
+            -- after this frame. Any window may ask: each has its own lane, so what one window
+            -- wants cannot undo what another has.
             local st = state.get(buf)
             if
                 st ~= nil
-                and reconcile_inline(buf, top, math.min(bot, api.nvim_buf_line_count(buf) - 1), inline, true)
-                and win == api.nvim_get_current_win()
+                and reconcile_inline(
+                    buf,
+                    render.win_ns(win),
+                    top,
+                    math.min(bot, api.nvim_buf_line_count(buf) - 1),
+                    inline,
+                    true
+                )
                 and not st.inline_pending
             then
                 st.inline_pending = true

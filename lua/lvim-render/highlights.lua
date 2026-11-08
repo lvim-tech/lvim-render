@@ -100,6 +100,8 @@ local function build(c)
     groups["LvimRenderLink"] = group(config.highlights.link or {}, c)
     groups["LvimRenderTerm"] = group(config.highlights.term or {}, c)
     groups["LvimRenderTableBorder"] = group(config.highlights.table_border or {}, c)
+    -- Stacked on the row's own highlight, so it adds the line and takes no colour away from it.
+    groups["LvimRenderTableRowEnd"] = { underline = true, sp = groups["LvimRenderTableBorder"].fg }
     -- The CURSOR LINE inside a boxed table. The box is virtual lines, and Neovim paints no
     -- 'cursorline' over those — so the row the cursor is on is painted here instead, from the
     -- editor's OWN CursorLine background, so it looks like the cursor line everywhere else and
