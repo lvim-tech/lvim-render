@@ -800,3 +800,7 @@ runs in `mode = "material"` and the terminal shows kitty unicode placeholders, t
 drawn as images of those same glyphs, in their own colours and with their columns kept; in `nerd` and `mix`
 they stay text. There is nothing to set here: the mode is lvim-icons' (`lvim-utils.icons.ui_text` does the
 work).
+
+An icon stands in for markup it conceals (a heading's `#` run, a callout's `[!TYPE]`, a link's bracket). In
+normal and visual mode the cursor never rests there: it lands on the first letter of the text after the icon,
+and moving left out of that text skips over it. A live lvim-icons mode switch repaints every rendered buffer.

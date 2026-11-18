@@ -236,6 +236,18 @@ local icon_cache = {}
 ---@type table<string, true>  keys whose resolution is already scheduled
 local icon_pending = {}
 
+-- A live lvim-icons mode switch: what each icon resolves to changed — forget it all and draw again.
+vim.api.nvim_create_autocmd("User", {
+    group = vim.api.nvim_create_augroup("LvimRenderIconsMode", { clear = true }),
+    pattern = "LvimIconsMode",
+    callback = function()
+        icon_cache, icon_pending = {}, {}
+        pcall(function()
+            require("lvim-render.engine").icons_changed()
+        end)
+    end,
+})
+
 --- Whether `text` is ONE private-use (Nerd Font) glyph with optional blanks around it — only those are UI
 --- icons; bullets, rules and other symbols a format config may hold stay text.
 ---@param text string

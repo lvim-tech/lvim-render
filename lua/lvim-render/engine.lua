@@ -1540,6 +1540,19 @@ function M.detach(buf)
     state.drop(buf)
 end
 
+--- The icons changed how they are drawn (a live lvim-icons mode switch): take every rendered buffer's
+--- persistent lane down and paint it again, so its icons are drawn in the new mode.
+---@return nil
+function M.icons_changed()
+    for _, buf in ipairs(api.nvim_list_bufs()) do
+        local st = api.nvim_buf_is_loaded(buf) and state.get(buf) or nil
+        if st ~= nil and st.inert == nil and st.enabled then
+            render.clear_lanes(buf)
+            redraw_walk(buf)
+        end
+    end
+end
+
 --- Turn one buffer's rendering on or off, restoring or re-taking its windows' options.
 ---@param buf integer
 ---@param on boolean
@@ -1703,10 +1716,56 @@ function M.on_win_scrolled(win)
     end
 end
 
+---@type table<integer, [integer, integer]>  window → the cursor where the guard last saw it
+local last_cursor = {}
+
+--- Keep the cursor off a concealed range an icon stands in for (normal / visual mode): it lands on the
+--- TEXT after the icon — or, moving left out of the text, on the character before the range, when there is
+--- one. So the cursor is never drawn over an icon, the way an inline (virtual) icon is skipped.
+---@return nil
+local function guard_icon_cursor()
+    local mode = api.nvim_get_mode().mode:sub(1, 1)
+    if mode ~= "n" and mode ~= "v" and mode ~= "V" and mode ~= "\22" then
+        return
+    end
+    local win = api.nvim_get_current_win()
+    local spans = state.icon_spans[win]
+    local pos = api.nvim_win_get_cursor(win)
+    local prev = last_cursor[win]
+    last_cursor[win] = pos
+    local row_spans = spans and spans[pos[1] - 1]
+    if not row_spans then
+        return
+    end
+    local col = pos[2]
+    local line = api.nvim_buf_get_lines(0, pos[1] - 1, pos[1], false)[1] or ""
+    for _, s in ipairs(row_spans) do
+        -- the blanks between the range and the text count too: they are the icon's gap, not text
+        local text_at = (line:find("%S", s[2] + 1) or (s[2] + 1)) - 1
+        if col >= s[1] and col < math.max(s[2], text_at) then
+            local moving_left = prev and prev[1] == pos[1] and prev[2] > col
+            local target
+            if moving_left and s[1] > 0 then
+                target = s[1] - 1
+            elseif text_at < #line then
+                target = text_at -- the first letter of the text after the icon
+            elseif s[1] > 0 then
+                target = s[1] - 1
+            end
+            if target and target ~= col then
+                pcall(api.nvim_win_set_cursor, win, { pos[1], target })
+                last_cursor[win] = { pos[1], target }
+            end
+            return
+        end
+    end
+end
+
 --- The cursor moved: redraw only the lines whose reveal membership changed — the span that WAS
 --- raw and the line that now is. O(1) per move, no re-parse, no mark churn.
 ---@return nil
 function M.on_cursor_moved()
+    guard_icon_cursor()
     local win = api.nvim_get_current_win()
     local buf = api.nvim_win_get_buf(win)
     -- The widget owns the cursor's position while it is walking a box; a move that lands ANYWHERE
@@ -2011,6 +2070,24 @@ function M.start()
             top, bot = M.reconcile_span(top, bot, extend)
             ---@type LvimRenderOp[]
             local inline = {}
+            -- the concealed ranges an inline icon is anchored at (either edge) — the cursor guard's map
+            local anchors, hidden = {}, {}
+            for i = 1, #ops do
+                local oo = ops[i].opts
+                if oo.virt_text_pos == "inline" and oo.virt_text then
+                    anchors[ops[i].row .. ":" .. ops[i].col] = true
+                elseif oo.conceal == "" and oo.end_col and (oo.end_row == nil or oo.end_row == ops[i].row) then
+                    hidden[#hidden + 1] = ops[i]
+                end
+            end
+            local spans = {}
+            for _, h in ipairs(hidden) do
+                if anchors[h.row .. ":" .. h.opts.end_col] or anchors[h.row .. ":" .. h.col] then
+                    spans[h.row] = spans[h.row] or {}
+                    table.insert(spans[h.row], { h.col, h.opts.end_col })
+                end
+            end
+            state.icon_spans[win] = spans
             for i = 1, #ops do
                 local o = ops[i]
                 -- `conceal_lines` joins the persistent lane for the same reason inline text and

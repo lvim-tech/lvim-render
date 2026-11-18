@@ -106,6 +106,11 @@ M.wins = {}
 --- rendered RAW on the last pass, so a cursor move redraws only the lines whose membership changed
 M.reveal = {}
 
+---@type table<integer, table<integer, [integer, integer][]>>  window → row → the concealed byte ranges
+---   [c0, c1) an inline ICON stands in for (a heading's `#` run, a callout's token, a label's bracket):
+---   the cursor is kept off them in normal / visual mode, so it never sits on the icon
+M.icon_spans = {}
+
 --- The state for a buffer, if it is attached.
 ---@param buf integer
 ---@return LvimRenderBufState|nil
