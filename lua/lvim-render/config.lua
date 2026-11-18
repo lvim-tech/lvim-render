@@ -561,14 +561,14 @@ local M = {
         },
         lists = {
             enabled = true,
-            bullets = { "●", "○", "◆", "◇" },
+            bullets = { "\u{f09de}", "\u{f0766}", "\u{f0a10}", "\u{f14dc}" },
         },
         rule = {
             enabled = true,
             glyph = "─",
             -- Centred in the line; deliberately the same plain-Unicode family as the bullets —
             -- document typography, not UI chrome. Any single-cell glyph works.
-            icon = "◆",
+            icon = "\u{f0a10}",
         },
         emphasis = { enabled = true },
         inline_code = { enabled = true, pad = " " },
@@ -675,7 +675,7 @@ local M = {
                 horizontal = "─",
                 vertical = "│",
                 continuation = "┊",
-                overflow = "›",
+                overflow = "\u{f0142}",
                 top_left = "┌",
                 top_mid = "┬",
                 top_right = "┐",
@@ -723,7 +723,7 @@ local M = {
         },
         lists = {
             enabled = true,
-            bullets = { "●", "○", "◆", "◇" },
+            bullets = { "\u{f09de}", "\u{f0766}", "\u{f0a10}", "\u{f14dc}" },
         },
         checkboxes = {
             enabled = true,
@@ -801,13 +801,13 @@ local M = {
         },
         lists = {
             enabled = true,
-            bullets = { "●", "○", "◆", "◇" },
+            bullets = { "\u{f09de}", "\u{f0766}", "\u{f0a10}", "\u{f14dc}" },
             -- `+` is typst's AUTO-NUMBERED marker. Drawing it as a dot would erase the one thing
             -- that distinguishes it from `-`, so it renders as its position in the run instead.
             enum = { enabled = true, format = "{n}." },
         },
         -- `/ Term: description` — typst's definition list.
-        terms = { enabled = true, icon = "◆", bold = true },
+        terms = { enabled = true, icon = "\u{f0a10}", bold = true },
         emphasis = { enabled = true },
         inline_code = { enabled = true, pad = " " },
         code = {
@@ -881,7 +881,7 @@ local M = {
         },
         lists = {
             enabled = true,
-            bullets = { "●", "○", "◆", "◇" },
+            bullets = { "\u{f09de}", "\u{f0766}", "\u{f0a10}", "\u{f14dc}" },
             -- `enumerate` numbers its items, and LaTeX writes no number in the source at all —
             -- so the marker renders as the item's position in its environment.
             enum = { enabled = true, format = "{n}." },
@@ -941,7 +941,7 @@ local M = {
         rule = {
             enabled = false,
             glyph = "─",
-            icon = "◆",
+            icon = "\u{f0a10}",
         },
     },
     -- Math is COMMON, not a format: `$…$` / `$$…$$` appear inside markdown and org alike, and the

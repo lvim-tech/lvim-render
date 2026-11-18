@@ -471,9 +471,27 @@ local function text_impl()
     local line_hl = active and strong or band
 
     local width = api.nvim_win_get_width(0) - vim.fn.getwininfo(api.nvim_get_current_win())[1].textoff
-    local rest = width - fn.strdisplaywidth(title) - fn.strdisplaywidth(info)
     ---@type [string, string][]
     local chunks = { { title, line_hl } }
+    -- The level icon as its lvim-icons image where UI icons are images: the title is split around it, the
+    -- image keeping the band's background (the template places the icon; its first occurrence is it).
+    local at = values.icon ~= "" and title:find(values.icon, 1, true) or nil
+    if at ~= nil then
+        local icon_chunks = highlights.icon_chunks(values.icon, line_hl)
+        if not (#icon_chunks == 1 and icon_chunks[1][1] == values.icon) then
+            chunks = {}
+            if at > 1 then
+                chunks[1] = { title:sub(1, at - 1), line_hl }
+            end
+            vim.list_extend(chunks, icon_chunks)
+            chunks[#chunks + 1] = { title:sub(at + #values.icon), line_hl }
+        end
+    end
+    local title_cells = 0
+    for _, c in ipairs(chunks) do
+        title_cells = title_cells + fn.strdisplaywidth(c[1])
+    end
+    local rest = width - title_cells - fn.strdisplaywidth(info)
     -- WHERE THE BOX SITS. "right" pushes it to the far end of the row by filling between it and
     -- the title, so the count lines up with the other right-hand chrome instead of trailing the
     -- title at a distance that changes with every heading's length.

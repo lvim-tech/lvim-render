@@ -777,9 +777,11 @@ local function emit_heading(ctx, node, setext)
         -- space — the title begins the instant the braces conceal — and the icon ended up glued
         -- to the first letter. Stated per format rather than assumed.
         op(ctx, msr, setext and 0 or mec, {
-            virt_text = {
-                { string.rep(" ", spec.pad or 0) .. icon .. string.rep(" ", hconf.icon_gap or 0), grp },
-            },
+            -- the icon as its lvim-icons image where UI icons are images, on the band's background
+            virt_text = highlights.icon_chunks(
+                string.rep(" ", spec.pad or 0) .. icon .. string.rep(" ", hconf.icon_gap or 0),
+                grp
+            ),
             virt_text_pos = "inline",
         })
     end
@@ -845,16 +847,15 @@ local function emit_rule(ctx, node)
     ---@type [string, string][]
     local chunks
     local icon = rconf.icon or ""
-    local icon_cells = icon ~= "" and fn.strdisplaywidth(icon) + 2 or 0
+    -- a Nerd icon may be drawn as an image (two cells): measured from what is actually drawn
+    local icon_cells = icon ~= "" and highlights.icon_width(" " .. icon .. " ", "LvimRenderRuleIcon") or 0
     if icon ~= "" and width > icon_cells + 2 then
         -- A full-width line with the icon CENTRED in it: `─── ◆ ───`.
         local left = math.floor((width - icon_cells) / 2)
         local right = width - icon_cells - left
-        chunks = {
-            { fill_line(rconf.glyph, left), "LvimRenderRule" },
-            { " " .. icon .. " ", "LvimRenderRuleIcon" },
-            { fill_line(rconf.glyph, right), "LvimRenderRule" },
-        }
+        chunks = { { fill_line(rconf.glyph, left), "LvimRenderRule" } }
+        vim.list_extend(chunks, highlights.icon_chunks(" " .. icon .. " ", "LvimRenderRuleIcon"))
+        chunks[#chunks + 1] = { fill_line(rconf.glyph, right), "LvimRenderRule" }
     else
         chunks = { { fill_line(rconf.glyph, width), "LvimRenderRule" } }
     end
@@ -1149,11 +1150,21 @@ local function emit_codeblock(ctx, node)
                 local lsr, lsc, _, lec = lang_node:range()
                 op(ctx, lsr, lsc, { end_col = lec, conceal = "" })
             end
-            local chip = (" %s %s "):format(icon, lang)
-            local cells = fn.strdisplaywidth(chip)
+            local chip_hl = highlights.chip(icon_hl)
+            ---@type [string, string][]
+            local chip = { { (" %s %s "):format(icon, lang), chip_hl } }
+            if icon == cconf.icon then
+                -- the plugin's own UI glyph (not a language's file icon): its lvim-icons image where UI
+                -- icons are images, on the chip's tint
+                chip = highlights.icon_prefix(" " .. icon .. " ", lang .. " ", chip_hl)
+            end
+            local cells = 0
+            for _, c in ipairs(chip) do
+                cells = cells + fn.strdisplaywidth(c[1])
+            end
             ---@type vim.api.keyset.set_extmark
             local opts = {
-                virt_text = { { chip, highlights.chip(icon_hl) } },
+                virt_text = chip,
                 hl_mode = "combine",
                 priority = config.priorities.band + 1,
             }
@@ -1181,7 +1192,11 @@ local function emit_codeblock(ctx, node)
     end
     local csr = content:range()
     op(ctx, csr, 0, {
-        virt_text = { { icon, icon_hl }, { " " .. lang, "LvimRenderCodeLabel" } },
+        -- the fallback UI glyph as its image where UI icons are images (a language's file icon stays)
+        virt_text = vim.list_extend(
+            icon == cconf.icon and highlights.icon_chunks(icon, icon_hl) or { { icon, icon_hl } },
+            { { " " .. lang, "LvimRenderCodeLabel" } }
+        ),
         virt_text_pos = "right_align",
         hl_mode = "combine",
     })
@@ -1285,7 +1300,8 @@ local function emit_quote(ctx, node)
         -- with it (the heading-icon lesson).
         op(ctx, sr, token_s - 1, { end_col = token_e, conceal = "" })
         op(ctx, sr, token_e, {
-            virt_text = { { callout.icon .. " " .. callout.label, grp } },
+            -- the type's icon as its lvim-icons image where UI icons are images
+            virt_text = highlights.icon_prefix(callout.icon, " " .. callout.label, grp),
             virt_text_pos = "inline",
         })
     end
@@ -1417,6 +1433,17 @@ local EMPHASIS_HL = {
 -- Cyrillic and CJK measure as cells, never bytes. The fixture cross-pins this arithmetic
 -- against the real collect() ops for the same cells.
 
+--- A link icon's inline insertion for the measuring mirror: the cells the emitter draws (two for an
+--- lvim-icons image) and the text a wrapped cell shows instead — the glyph, padded to those same cells,
+--- so a wrapped cell and an unwrapped one keep the same column widths.
+---@param col integer
+---@param icon string
+---@return { col: integer, width: integer, text: string }
+local function icon_insert(col, icon)
+    local width = highlights.icon_width(icon, "LvimRenderLink")
+    return { col = col, width = width, text = icon .. string.rep(" ", width - fn.strdisplaywidth(icon)) }
+end
+
 --- The inline-layer adjustments for one buffer ROW: merged conceal intervals (with their
 --- replacement widths) and inline insertions, mirroring exactly what the emitters produce.
 ---@param ctx LvimRenderWalkCtx
@@ -1539,17 +1566,14 @@ local function row_adjustments(ctx, ichild, iq, row)
                                     raw[#raw + 1] = { s = lsc, e = lsc + pipe, repl = 0 }
                                 end
                                 if fconf.links.icons.wiki ~= "" then
-                                    inserts[#inserts + 1] = {
-                                        col = pipe ~= nil and (lsc + pipe) or lsc,
-                                        width = fn.strdisplaywidth(fconf.links.icons.wiki),
-                                        text = fconf.links.icons.wiki,
-                                    }
+                                    inserts[#inserts + 1] =
+                                        icon_insert(pipe ~= nil and (lsc + pipe) or lsc, fconf.links.icons.wiki)
                                 end
                             end
                         else
                             local icon = name == "image" and fconf.links.icons.image or fconf.links.icons.link
                             if icon ~= "" then
-                                inserts[#inserts + 1] = { col = lsc, width = fn.strdisplaywidth(icon), text = icon }
+                                inserts[#inserts + 1] = icon_insert(lsc, icon)
                             end
                         end
                     end
@@ -1590,11 +1614,7 @@ local function row_adjustments(ctx, ichild, iq, row)
                     raw[#raw + 1] = { s = sc, e = sc + 1, repl = 0 }
                     raw[#raw + 1] = { s = ec - 1, e = ec, repl = 0 }
                     if fconf.links.icons.auto ~= "" then
-                        inserts[#inserts + 1] = {
-                            col = sc + 1,
-                            width = fn.strdisplaywidth(fconf.links.icons.auto),
-                            text = fconf.links.icons.auto,
-                        }
+                        inserts[#inserts + 1] = icon_insert(sc + 1, fconf.links.icons.auto)
                     end
                 elseif name == "escape" and fconf.escapes ~= nil and fconf.escapes.enabled then
                     raw[#raw + 1] = { s = sc, e = sc + 1, repl = 0 }
@@ -2482,7 +2502,7 @@ local function emit_table_wrapped(ctx, node, info, fit)
     local prefix = table_prefix(ctx, node)
     for i, chunks in ipairs(lines) do
         if fit.overflow then
-            chunks = clip_chunks(chunks, fit.avail, tconf.borders.overflow or "›")
+            chunks = clip_chunks(chunks, fit.avail, tconf.borders.overflow or "\u{f0142}")
         end
         if #prefix > 0 then
             local joined = vim.list_extend({}, prefix)
@@ -2961,7 +2981,7 @@ local function emit_typst_url(ctx, node)
         return
     end
     op(ctx, sr, sc, {
-        virt_text = { { lconf.icons.auto, "LvimRenderLink" } },
+        virt_text = highlights.icon_chunks(lconf.icons.auto, "LvimRenderLink"),
         virt_text_pos = "inline",
     })
 end
@@ -2985,7 +3005,7 @@ local function emit_typst_label(ctx, node)
     end
     if lconf.icon ~= "" then
         op(ctx, sr, sc + 1, {
-            virt_text = { { lconf.icon, "LvimRenderLink" } },
+            virt_text = highlights.icon_chunks(lconf.icon, "LvimRenderLink"),
             virt_text_pos = "inline",
         })
     end
@@ -3006,7 +3026,7 @@ local function emit_typst_ref(ctx, node)
     end
     op(ctx, sr, sc, { end_col = sc + 1, conceal = "" })
     op(ctx, sr, sc + 1, {
-        virt_text = { { rconf.icon, "LvimRenderLink" } },
+        virt_text = highlights.icon_chunks(rconf.icon, "LvimRenderLink"),
         virt_text_pos = "inline",
     })
 end
@@ -3311,7 +3331,7 @@ local function emit_latex_link(ctx, node)
         local csr, csc, _, cec = command:range()
         op(ctx, csr, csc, { end_col = cec, conceal = "" })
         if icon ~= "" then
-            op(ctx, csr, cec, { virt_text = { { icon, "LvimRenderLink" } }, virt_text_pos = "inline" })
+            op(ctx, csr, cec, { virt_text = highlights.icon_chunks(icon, "LvimRenderLink"), virt_text_pos = "inline" })
         end
     end
     if not lconf.conceal then
@@ -3374,7 +3394,7 @@ local function emit_latex_reference(ctx, node, conf, hl)
     local csr, csc, _, cec = command:range()
     op(ctx, csr, csc, { end_col = cec, conceal = "" })
     if conf.icon ~= "" then
-        op(ctx, csr, cec, { virt_text = { { conf.icon, hl } }, virt_text_pos = "inline" })
+        op(ctx, csr, cec, { virt_text = highlights.icon_chunks(conf.icon, hl), virt_text_pos = "inline" })
     end
     if conf.conceal == false then
         return
@@ -3621,7 +3641,7 @@ local function emit_org_markup(ctx, node)
                 end
                 if lconf.icons.link ~= "" then
                     op(ctx, link.row, link.mid or (link.s + 2), {
-                        virt_text = { { lconf.icons.link, "LvimRenderLink" } },
+                        virt_text = highlights.icon_chunks(lconf.icons.link, "LvimRenderLink"),
                         virt_text_pos = "inline",
                     })
                 end
@@ -3793,7 +3813,7 @@ local function emit_autolink(ctx, node)
     op(ctx, er, ec - 1, { end_col = ec, conceal = "" })
     if lconf.icons.auto ~= "" then
         op(ctx, sr, sc + 1, {
-            virt_text = { { lconf.icons.auto, "LvimRenderLink" } },
+            virt_text = highlights.icon_chunks(lconf.icons.auto, "LvimRenderLink"),
             virt_text_pos = "inline",
         })
     end
@@ -3829,7 +3849,7 @@ local function emit_refdef(ctx, node)
     end
     if rconf.icon ~= "" then
         op(ctx, sr, sc, {
-            virt_text = { { rconf.icon, "LvimRenderLink" } },
+            virt_text = highlights.icon_chunks(rconf.icon, "LvimRenderLink"),
             virt_text_pos = "inline",
         })
     end
@@ -4028,7 +4048,7 @@ local function emit_link(ctx, node, image)
     end
     if icon ~= "" then
         op(ctx, lsr, lsc, {
-            virt_text = { { icon, "LvimRenderLink" } },
+            virt_text = highlights.icon_chunks(icon, "LvimRenderLink"),
             virt_text_pos = "inline",
         })
     end
@@ -4083,7 +4103,7 @@ local function emit_wikilink(ctx, node)
     end
     if lconf.icons.wiki ~= "" then
         op(ctx, sr, shown, {
-            virt_text = { { lconf.icons.wiki, "LvimRenderLink" } },
+            virt_text = highlights.icon_chunks(lconf.icons.wiki, "LvimRenderLink"),
             virt_text_pos = "inline",
         })
     end

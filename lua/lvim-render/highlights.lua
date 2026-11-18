@@ -224,6 +224,118 @@ function M.chip(icon_hl)
     return icon_hl
 end
 
+-- ── UI icons as images ──────────────────────────────────────────────────────
+-- With lvim-icons drawing UI icons as IMAGES ("material"), a Nerd glyph the renderer paints (heading,
+-- link, callout, label icons …) becomes two kitty placeholder cells whose highlight foreground IS the image
+-- id. Resolving one transmits the image and defines groups — a mutation that must not happen while the
+-- screen is being drawn (the passes run inside the decoration provider), so a miss draws the glyph as text
+-- for this frame, resolves OUT of the redraw and asks for one more.
+
+---@type table<string, [string, string][]|false>  "<text>\0<group>" → its chunks; false = stays as given
+local icon_cache = {}
+---@type table<string, true>  keys whose resolution is already scheduled
+local icon_pending = {}
+
+--- Whether `text` is ONE private-use (Nerd Font) glyph with optional blanks around it — only those are UI
+--- icons; bullets, rules and other symbols a format config may hold stay text.
+---@param text string
+---@return boolean
+local function is_icon(text)
+    local glyph = text:match("^%s*([^%s]+)%s*$")
+    if glyph == nil or vim.fn.strchars(glyph) ~= 1 then
+        return false
+    end
+    local cp = vim.fn.char2nr(glyph)
+    return (cp >= 0xE000 and cp <= 0xF8FF) or (cp >= 0xF0000 and cp <= 0x10FFFD)
+end
+
+--- Resolve one icon now (outside a redraw): its chunks, or false when it stays the text as given.
+---@param text string
+---@param group string?
+---@return [string, string][]|false
+local function resolve_icon(text, group)
+    local ok, iconlib = pcall(require, "lvim-utils.icons")
+    if not (ok and iconlib.ui_text) then
+        return false
+    end
+    local t, h, img = iconlib.ui_text(text, group)
+    if not img then
+        -- a glyph with no image while the others are images comes back padded to their two cells
+        return t ~= text and { { t, group } } or false
+    end
+    local lead, trail = t:match("^%s*"), t:match("%s*$")
+    -- the image keeps the background of the cell it sits in (a heading band, a chip)
+    local img_hl = group and iconlib.on_bg({ image = true, hl = h }, group) or h
+    local chunks = {}
+    if lead ~= "" then
+        chunks[#chunks + 1] = { lead, group }
+    end
+    chunks[#chunks + 1] = { t:sub(#lead + 1, #t - #trail), img_hl }
+    if trail ~= "" then
+        chunks[#chunks + 1] = { trail, group }
+    end
+    return chunks
+end
+
+--- A UI icon (one glyph, optional blanks around it) as virt_text chunks: the glyph itself in `group`, or —
+--- where lvim-icons draws UI icons as images — its image cells in the image's own group with the blanks kept
+--- in `group`. Safe to call from inside a redraw (see above).
+---@param text string
+---@param group string?
+---@return [string, string][]
+function M.icon_chunks(text, group)
+    local plain = { { text, group } }
+    if text == nil or text == "" or not is_icon(text) then
+        return plain
+    end
+    local key = text .. "\0" .. (group or "")
+    local cached = icon_cache[key]
+    if cached ~= nil then
+        -- a copy: callers append their own chunks to the list
+        return cached and vim.list_extend({}, cached) or plain
+    end
+    if not icon_pending[key] then
+        icon_pending[key] = true
+        vim.schedule(function()
+            icon_pending[key] = nil
+            local chunks = resolve_icon(text, group)
+            icon_cache[key] = chunks
+            if chunks then
+                -- the frame that missed drew the glyph as text: draw again with the image
+                pcall(vim.api.nvim__redraw, { valid = false })
+            end
+        end)
+    end
+    return plain
+end
+
+--- An icon followed by more text in the SAME group (a chip, a callout title): one chunk `text .. rest` while
+--- the icon stays a glyph (exactly what was drawn before), the icon's chunks + `rest` when it is an image.
+---@param text string
+---@param rest string
+---@param group string?
+---@return [string, string][]
+function M.icon_prefix(text, rest, group)
+    local chunks = M.icon_chunks(text, group)
+    if #chunks == 1 and chunks[1][1] == text then
+        return { { text .. rest, group } }
+    end
+    chunks[#chunks + 1] = { rest, group }
+    return chunks
+end
+
+--- The display cells `icon_chunks(text, group)` takes — for a pass that measures the line it decorates.
+---@param text string
+---@param group string?
+---@return integer
+function M.icon_width(text, group)
+    local w = 0
+    for _, c in ipairs(M.icon_chunks(text, group)) do
+        w = w + vim.fn.strdisplaywidth(c[1])
+    end
+    return w
+end
+
 --- Bind the palette factory. Idempotent; a repeat call re-derives from the current config.
 ---@return nil
 function M.setup()

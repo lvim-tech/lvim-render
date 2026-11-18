@@ -398,7 +398,7 @@ it("a table too wide for min_col is cut at the edge, and says so", function()
     wrapped({ "", "|" .. string.rep(" col |", 30), "|" .. string.rep("---|", 30), "|" .. string.rep(" 1 |", 30) })
     local rows = screen(6)
     truthy(rows[3]:find("│ col", 1, true) ~= nil, vim.inspect(rows))
-    truthy(rows[3]:find("›", 1, true) ~= nil, "the cut is visible: " .. vim.inspect(rows))
+    truthy(rows[3]:find("\u{f0142}", 1, true) ~= nil, "the cut is visible: " .. vim.inspect(rows))
 end)
 
 it("a box in a quote keeps the border, in a list the indent", function()

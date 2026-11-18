@@ -29,7 +29,7 @@ generation-cancelled: a superseded rebuild never paints stale decorations.
 - **Checkboxes** — `[ ]` / `[x]` and any configured extra state (`[-]`, `[~]`, yours) render as a
   single coloured glyph in place of marker and token, per state.
 - **Rules** — a `---` line is drawn across the window's text width in its own colour
-  (`highlights.rule`), with a configurable icon centred in it (`─── ◆ ───`,
+  (`highlights.rule`), with a configurable icon centred in it (`─── 󰨐 ───`,
   `highlights.rule_icon`; `icon = ""` for an unbroken line). The line STYLE is any glyph or
   multi-char pattern, filled to the exact width — single `─`, bold `━`, double `═`, dashed `┄`
   `╌`, dotted `·`, wavy `∿` `≈`, or patterns like `"·─"` (all verified single-width; `﹏` is
@@ -281,12 +281,12 @@ require("lvim-render").setup({
         },
         lists = {
             enabled = true,
-            bullets = { "●", "○", "◆", "◇" }, -- glyph per nesting depth, cycled
+            bullets = { "󰧞", "󰝦", "󰨐", "󱓜" }, -- glyph per nesting depth, cycled
         },
         rule = {
             enabled = true,
             glyph = "─", -- repeated across the window's text width
-            icon = "◆", -- centred in the line; "" for an unbroken line
+            icon = "󰨐", -- centred in the line; "" for an unbroken line
         },
         emphasis = { enabled = true }, -- conceal the markers; styling stays treesitter's
         inline_code = { enabled = true, pad = " " }, -- each backtick CONCEALS to this char
@@ -350,7 +350,7 @@ require("lvim-render").setup({
                 horizontal = "─",
                 vertical = "│",
                 continuation = "┊", -- later lines of a wrapped row
-                overflow = "›", -- ends a line of a box cut at the window's edge
+                overflow = "󰅂", -- ends a line of a box cut at the window's edge
                 top_left = "┌",
                 top_mid = "┬",
                 top_right = "┐",
@@ -397,7 +397,7 @@ require("lvim-render").setup({
         },
         lists = {
             enabled = true,
-            bullets = { "●", "○", "◆", "◇" },
+            bullets = { "󰧞", "󰝦", "󰨐", "󱓜" },
         },
         checkboxes = {
             enabled = true,
@@ -462,13 +462,13 @@ require("lvim-render").setup({
         },
         lists = {
             enabled = true,
-            bullets = { "●", "○", "◆", "◇" },
+            bullets = { "󰧞", "󰝦", "󰨐", "󱓜" },
             -- `+` is typst's AUTO-NUMBERED marker. Drawing it as a dot would erase the one thing
             -- that distinguishes it from `-`, so it renders as its position in the run instead.
             enum = { enabled = true, format = "{n}." },
         },
         -- `/ Term: description` — typst's definition list.
-        terms = { enabled = true, icon = "◆", bold = true },
+        terms = { enabled = true, icon = "󰨐", bold = true },
         emphasis = { enabled = true },
         inline_code = { enabled = true, pad = " " },
         code = {
@@ -522,7 +522,7 @@ require("lvim-render").setup({
         },
         lists = {
             enabled = true,
-            bullets = { "●", "○", "◆", "◇" },
+            bullets = { "󰧞", "󰝦", "󰨐", "󱓜" },
             enum = { enabled = true, format = "{n}." }, -- enumerate writes no number in the source
             conceal_environment = true, -- hide the \begin/\end rows of a list
             environments = { itemize = true, enumerate = true, description = true },
@@ -563,7 +563,7 @@ require("lvim-render").setup({
         citations = { enabled = true, icon = "󰂺 " }, -- \cite{…}
         escapes = { enabled = true }, -- `\%` → `%`
         -- LaTeX's rule is a command, not a block element; the block stays for shape parity.
-        rule = { enabled = false, glyph = "─", icon = "◆" },
+        rule = { enabled = false, glyph = "─", icon = "󰨐" },
     },
     -- Math is common, not a format: `$…$` / `$$…$$` appear inside markdown and org alike, and
     -- typst and LaTeX formulas run through the same table. `image` is the experimental kitty
@@ -792,3 +792,11 @@ fold expression raised (drawn as the builtin fold line instead of an empty one),
 `'concealcursor'` ↔ `reveal.modes` agreement per mode, every open preview with whether its
 mirror is in step with its source, whether the completion source registered with lvim-cmp,
 glyph cell widths, template placeholders and palette accents.
+
+## Icons
+
+Every icon this plugin draws is a Nerd Font glyph. When [lvim-icons](https://github.com/lvim-tech/lvim-icons)
+runs in `mode = "material"` and the terminal shows kitty unicode placeholders, the plugin's own UI glyphs are
+drawn as images of those same glyphs, in their own colours and with their columns kept; in `nerd` and `mix`
+they stay text. There is nothing to set here: the mode is lvim-icons' (`lvim-utils.icons.ui_text` does the
+work).

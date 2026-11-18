@@ -282,7 +282,7 @@ README.md; the reference below explains the options by group.
                       YOUR OWN highlight group verbatim:
                       `highlights.h1 = { group = "MyH1" }` — used
                       everywhere the level paints (band, icon, fold line).
-`markdown.lists`      `enabled` and `bullets` ({ "●", "○", "◆", "◇" }) — the
+`markdown.lists`      `enabled` and `bullets` ({ "󰧞", "󰝦", "󰨐", "󱓜" }) — the
                       glyph per nesting depth, cycled when deeper. The glyph
                       sits on the marker character itself, wherever the
                       grammar puts the node's edges.
@@ -291,7 +291,7 @@ README.md; the reference below explains the options by group.
                       or MULTI-CHAR pattern, cut to the exact cell: single
                       "─", bold "━", double "═", dashed "┄" "╌", dotted
                       "·", wavy "∿" "≈", patterns like "·─" — and `icon`
-                      ("◆") centred in the drawn line; "" leaves the line
+                      ("󰨐") centred in the drawn line; "" leaves the line
                       unbroken. Colours: `highlights.rule` (the line) and
                       `highlights.rule_icon` (the icon), each its own
                       accent.
