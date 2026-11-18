@@ -255,7 +255,7 @@ require("lvim-render").setup({
         text = {
             enabled = true, -- render the collapsed line instead of the raw +-- foldtext
             title = "{icon} {title}", -- leading chunk, in the heading level's group
-            info = " ➤ {count} lines ", -- the count BOX, in the level's accent blended harder
+            info = " 󰅂 {count} lines ", -- the count BOX, in the level's accent blended harder
             position = "right", -- which end of the collapsed row the box sits at | "left"
             count_tint = 0.4, -- how hard; the whole row rises to it while the cursor is on it
         },

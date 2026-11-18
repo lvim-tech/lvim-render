@@ -214,7 +214,7 @@ README.md; the reference below explains the options by group.
                       chrome) or "left" (straight after the heading's name).
 `fold.text`       the rendered collapsed line: `enabled` (true), `title`
                   ("{icon} {title}") drawn in the heading level's own band,
-                  `info` ("➤ {count} lines") drawn as a BOX in that level's
+                  `info` ("󰅂 {count} lines") drawn as a BOX in that level's
                   accent blended harder, and `count_tint` (0.4) — how much
                   harder. Placeholders: {icon}, {title}, {count}.
                   The row is filled to the window's width, so 'fillchars'

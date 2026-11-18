@@ -530,8 +530,8 @@ local M = {
             -- the other right-hand chrome) or "left" (straight after the title).
             position = "right",
             title = "{icon} {title}",
-            -- `➤` per the separator canon: the collapsed heading POINTS at what it hides.
-            info = " ➤ {count} lines ",
+            -- `󰅂` per the separator canon: the collapsed heading POINTS at what it hides.
+            info = " 󰅂 {count} lines ",
             -- The count box is the level's OWN accent blended harder than its band, so it reads
             -- as a box on the line rather than as more line. The whole row rises to this tint
             -- while the cursor is on it — the two then match exactly (the tint canon's active
