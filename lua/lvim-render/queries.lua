@@ -149,7 +149,10 @@ function M.strip_fence_conceals(source)
 end
 
 --- Restart treesitter highlighting on a buffer whose highlighter predates the override, so the
---- amended query takes effect there too. One call per attach; a no-op without a highlighter.
+--- amended query takes effect there too. One call per attach; a no-op without a highlighter, and
+--- a no-op when the highlighter already runs the amended query — the common case (highlighting
+--- started after setup). A restart re-parses the whole buffer: done on every attach, it was the
+--- largest single cost of opening a markdown file (~15 ms of ~27).
 ---@param buf integer
 ---@param lang string
 ---@return nil
@@ -157,10 +160,18 @@ function M.refresh_highlighter(buf, lang)
     if M.state[lang] == nil or M.state[lang].mode ~= "show" then
         return
     end
-    if vim.treesitter.highlighter.active[buf] ~= nil then
-        pcall(vim.treesitter.stop, buf)
-        pcall(vim.treesitter.start, buf, lang)
+    local hl = vim.treesitter.highlighter.active[buf]
+    if hl == nil then
+        return
     end
+    local ok, current = pcall(function()
+        return hl:get_query(lang):query() == vim.treesitter.query.get(lang, "highlights")
+    end)
+    if ok and current then
+        return
+    end
+    pcall(vim.treesitter.stop, buf)
+    pcall(vim.treesitter.start, buf, lang)
 end
 
 return M
